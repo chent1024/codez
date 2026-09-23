@@ -572,6 +572,8 @@ export interface AgentRuntimeInstallStatus {
   name: string;
   installed: boolean;
   command: string;
+  configured?: boolean;
+  args?: string[];
   installHint?: string;
   reason?: string;
   configPath?: string;
@@ -610,6 +612,7 @@ export interface IZCodeAgentService {
     command: string;
     args: string[];
   }): Promise<AgentRuntimeInstallStatus[]>;
+  deleteAgentServer(id: string): Promise<AgentRuntimeInstallStatus[]>;
   saveAgentServerModels(
     input: ZCodeAgentWorkspaceTarget & {
       runtimeId: AgentRuntimeId;

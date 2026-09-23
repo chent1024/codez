@@ -1,9 +1,19 @@
 import { useRef, useState } from "react";
+import { ArrowLeftIcon, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import type { AgentRuntimeInstallStatus } from "@zcode/services";
 import { ACP_DEFAULT_MODEL_ID } from "@zcode/shared";
 import { Button } from "@/components/ui/button.js";
 import { Input } from "@/components/ui/input.js";
 import { Switch } from "@/components/ui/switch.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu.js";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog.js";
+import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useServices } from "@/hooks/useServices.js";
 import { disambiguateAcpModelName, extractAcpBenefitBadge } from "@/lib/modelSelectionGroups.js";
 
@@ -11,6 +21,7 @@ export function AcpProviderDetail({
   status,
   configPath,
   onSaved,
+  onDeleted,
   workspacePath,
   workspaceIdentity,
   create = false,
@@ -19,16 +30,20 @@ export function AcpProviderDetail({
   status?: AgentRuntimeInstallStatus;
   configPath?: string;
   onSaved?: (id: string) => void;
+  onDeleted?: (id: string) => void;
   workspacePath: string;
   workspaceIdentity?: string;
   create?: boolean;
   onBack?: () => void;
 }) {
   const { zcodeAgentService } = useServices();
+  const confirmDialog = useConfirmDialog();
+  const { intl } = useZCodeIntl();
   const [id, setId] = useState(status?.id ?? "");
   const [name, setName] = useState(status?.name ?? "");
   const [command, setCommand] = useState(status?.command ?? "");
-  const [argsText, setArgsText] = useState("[]");
+  const [argsText, setArgsText] = useState(() => JSON.stringify(status?.args ?? []));
+  const [editing, setEditing] = useState(create);
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const toggleSavingRef = useRef(false);
@@ -41,7 +56,15 @@ export function AcpProviderDetail({
   const [enabledModelIds, setEnabledModelIds] = useState(
     () => new Set((status?.models ?? []).map((model) => model.id)),
   );
-  const editable = create;
+  const editable = create || (status?.configured === true && editing);
+
+  const cancelEdit = () => {
+    setName(status?.name ?? "");
+    setCommand(status?.command ?? "");
+    setArgsText(JSON.stringify(status?.args ?? []));
+    setError(null);
+    setEditing(false);
+  };
 
   const save = async () => {
     setError(null);
@@ -59,7 +82,40 @@ export function AcpProviderDetail({
     setSaving(true);
     try {
       await zcodeAgentService.saveAgentServer({ id, name, command, args });
+      if (
+        status &&
+        (status.command !== command || JSON.stringify(status.args ?? []) !== JSON.stringify(args))
+      ) {
+        // 命令身份改变后旧模型缓存失效；本地列表也不能继续显示旧 Agent 的模型。
+        setAvailableModels([]);
+        setEnabledModelIds(new Set());
+      }
+      setEditing(false);
       onSaved?.(id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteProvider = async () => {
+    if (!status?.configured || saving) return;
+    const confirmed = await confirmDialog({
+      title: intl.formatMessage(
+        { id: "settings.modelProvider.deleteConfirmTitle" },
+        { name: status.name },
+      ),
+      description: intl.formatMessage({ id: "settings.modelProvider.acpDeleteDescription" }),
+      confirmLabel: intl.formatMessage({ id: "settings.modelProvider.deleteConfirmAction" }),
+      cancelLabel: intl.formatMessage({ id: "common.cancel" }),
+    });
+    if (!confirmed) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await zcodeAgentService.deleteAgentServer(status.id);
+      onDeleted?.(status.id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -126,12 +182,50 @@ export function AcpProviderDetail({
   return (
     <section className="space-y-4" aria-label="ACP 供应商">
       <div>
-        {create && onBack ? (
-          <Button type="button" variant="ghost" onClick={onBack}>
-            返回
-          </Button>
-        ) : null}
-        <h2 className="text-ui-lg font-semibold">{create ? "添加 ACP 供应商" : status?.name}</h2>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {create && onBack ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="返回"
+                onClick={onBack}
+              >
+                <ArrowLeftIcon className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
+            <h2 className="truncate text-ui-lg font-semibold text-foreground">
+              {create ? "添加 ACP 供应商" : status?.name}
+            </h2>
+          </div>
+          {status?.configured && !editing ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={intl.formatMessage({ id: "common.more" })}
+                  disabled={saving}
+                >
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setEditing(true)}>
+                  <Pencil className="size-3.5" />
+                  {intl.formatMessage({ id: "settings.modelProvider.acpEdit" })}
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onSelect={() => void deleteProvider()}>
+                  <Trash2 className="size-3.5" />
+                  {intl.formatMessage({ id: "common.delete" })}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : null}
+        </div>
         <p className="mt-1 text-ui-sm text-foreground-subtle">
           ACP CLI 由执行 Agent 的 Host 启动；安装与认证由该 CLI 自己管理。
         </p>
@@ -153,7 +247,7 @@ export function AcpProviderDetail({
         <div className="grid gap-3">
           <label className="grid gap-1 text-ui-sm">
             稳定 ID
-            <Input value={id} onChange={(event) => setId(event.target.value)} />
+            <Input value={id} disabled={!create} onChange={(event) => setId(event.target.value)} />
           </label>
           <label className="grid gap-1 text-ui-sm">
             显示名称
@@ -172,9 +266,16 @@ export function AcpProviderDetail({
               {error}
             </p>
           ) : null}
-          <Button type="button" disabled={saving} onClick={() => void save()}>
-            {saving ? "保存中…" : "保存 ACP 供应商"}
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-3">
+            {!create ? (
+              <Button type="button" variant="outline" disabled={saving} onClick={cancelEdit}>
+                {intl.formatMessage({ id: "common.cancel" })}
+              </Button>
+            ) : null}
+            <Button type="button" disabled={saving} onClick={() => void save()}>
+              {saving ? "保存中…" : "保存 ACP 供应商"}
+            </Button>
+          </div>
         </div>
       ) : status ? (
         <div className="space-y-3">

@@ -1,7 +1,5 @@
 import { access, realpath } from "node:fs/promises";
 import { constants } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { delimiter, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import type { AgentRuntimeId } from "@zcode/shared";
@@ -10,10 +8,11 @@ import {
   readAgentServersRegistry,
 } from "#src/agent-runtime/agentServersRegistry.js";
 
-const execFileAsync = promisify(execFile);
 const WORKBUDDY_APP_PATH = "/Applications/WorkBuddy.app";
-const WORKBUDDY_TEAM_ID = "FN2V63AD2J";
-const WORKBUDDY_BUNDLE_ID = "com.tencent.workbuddy.mac";
+const WORKBUDDY_EXECUTABLE = join(
+  WORKBUDDY_APP_PATH,
+  "Contents/Resources/app.asar.unpacked/cli/bin/codebuddy",
+);
 
 export interface AcpRuntimeSpec {
   id: Exclude<AgentRuntimeId, "zcode-cli">;
@@ -111,41 +110,12 @@ export function isolateAcpNativeAutoMemory(
   return { args: baseArgs, env, verified: false };
 }
 
-async function resolveVerifiedWorkBuddyCommand(): Promise<string> {
+async function resolveWorkBuddyCommand(): Promise<string> {
   if (process.platform !== "darwin") throw new Error("WorkBuddy is only supported on macOS");
-  const probeOptions = { timeout: 10_000, maxBuffer: 1_000_000 };
-  try {
-    await execFileAsync(
-      "/usr/bin/codesign",
-      ["--verify", "--deep", "--strict", WORKBUDDY_APP_PATH],
-      probeOptions,
-    );
-  } catch {
-    throw new Error("WorkBuddy app code signature verification failed");
-  }
-  const signature = await execFileAsync(
-    "/usr/bin/codesign",
-    ["-dv", "--verbose=4", WORKBUDDY_APP_PATH],
-    probeOptions,
-  );
-  if (!`${signature.stdout}\n${signature.stderr}`.includes(`TeamIdentifier=${WORKBUDDY_TEAM_ID}`))
-    throw new Error("WorkBuddy app Team ID is not recognized");
-  const bundle = await execFileAsync(
-    "/usr/bin/plutil",
-    ["-extract", "CFBundleIdentifier", "raw", join(WORKBUDDY_APP_PATH, "Contents", "Info.plist")],
-    probeOptions,
-  );
-  if (bundle.stdout.trim() !== WORKBUDDY_BUNDLE_ID)
-    throw new Error("WorkBuddy app bundle ID is not recognized");
-  const executable = join(
-    WORKBUDDY_APP_PATH,
-    "Contents/Resources/app.asar.unpacked/cli/bin/codebuddy",
-  );
-  await access(executable, constants.X_OK);
-  return realpath(executable);
+  await access(WORKBUDDY_EXECUTABLE, constants.X_OK);
+  return realpath(WORKBUDDY_EXECUTABLE);
 }
-
-/** 只解析清单中的命令；嵌入式 WorkBuddy 必须先通过系统签名与应用身份校验。 */
+/** 列表曾因每次深度验签延迟显示；WorkBuddy 固定路径只核对可执行权限。 */
 export async function resolveAcpRuntimeCommand(
   spec: AcpRuntimeSpec,
   env: NodeJS.ProcessEnv = process.env,
@@ -157,7 +127,7 @@ export async function resolveAcpRuntimeCommand(
       throw new Error(`ACP Agent configuration changed or is unavailable: ${spec.id}`);
     return current.command;
   }
-  if (spec.distribution === "embedded-app") return resolveVerifiedWorkBuddyCommand();
+  if (spec.distribution === "embedded-app") return resolveWorkBuddyCommand();
   if (spec.macOnly && process.platform !== "darwin")
     throw new Error(`${spec.name} is only supported on macOS`);
   const pathEntries = (env.PATH ?? "").split(delimiter).filter(Boolean);

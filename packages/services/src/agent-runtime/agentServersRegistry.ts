@@ -156,28 +156,51 @@ export async function saveAgentServerConfig(input: {
     !isPlainObject(existing.agent_servers)
   )
     throw new Error("Existing agent_servers configuration is invalid");
-  const previous = existing.agent_servers[input.id];
-  if (
-    isPlainObject(previous) &&
-    (previous.command !== command || JSON.stringify(previous.args) !== JSON.stringify(input.args))
-  )
-    throw new Error("A stable Agent ID cannot be reassigned to another command or args");
   const next = {
     agent_servers: {
       ...existing.agent_servers,
       [input.id]: { name: input.name.trim(), command, args: [...input.args] },
     },
   };
+  await writeAgentServersDocument(path, next);
+  return readAgentServersRegistry(path);
+}
+
+/** 删除只移除指定自定义 ID，保留其他条目与历史会话绑定。 */
+export async function deleteAgentServerConfig(id: string): Promise<AgentServerRegistrySnapshot> {
+  if (
+    !agentRuntimeIdSchema.safeParse(id).success ||
+    id === "zcode-cli" ||
+    TRANSITIONAL_BUILTIN_IDS.has(id)
+  )
+    throw new Error("Agent ID is invalid or reserved");
+  const path = getAgentServersConfigPath();
+  const existing = JSON.parse(await readFile(path, "utf8")) as unknown;
+  if (
+    !isPlainObject(existing) ||
+    !hasOnlyKeys(existing, ["agent_servers"]) ||
+    !isPlainObject(existing.agent_servers)
+  )
+    throw new Error("Existing agent_servers configuration is invalid");
+  if (!Object.hasOwn(existing.agent_servers, id)) throw new Error("ACP supplier is not configured");
+  const { [id]: _removed, ...remaining } = existing.agent_servers;
+  await writeAgentServersDocument(path, { agent_servers: remaining });
+  return readAgentServersRegistry(path);
+}
+
+async function writeAgentServersDocument(path: string, document: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(temporary, `${JSON.stringify(document, null, 2)}\n`, {
+      mode: 0o600,
+      flag: "wx",
+    });
     await rename(temporary, path);
   } catch (error) {
     await unlink(temporary).catch(() => {});
     throw error;
   }
-  return readAgentServersRegistry(path);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -80,7 +80,7 @@ export function ProviderTemplatePicker({
           size="icon-sm"
           data-testid={TID_MODEL_PROVIDER_TEMPLATE_BACK_BUTTON}
           aria-label={intl.formatMessage({ id: "settings.modelProvider.templatePickerBack" })}
-          onClick={() => (method === "api" ? setMethod(null) : onBack())}
+          onClick={() => (method ? setMethod(null) : onBack())}
         >
           <ArrowLeftIcon className="size-4" aria-hidden="true" />
         </Button>

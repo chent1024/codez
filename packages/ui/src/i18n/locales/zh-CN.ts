@@ -2910,6 +2910,9 @@ const zhCN: Record<string, string> = {
   "settings.modelProvider.deleteConfirmDescription":
     "删除后将移除这条自定义 Provider 配置，当前设置页中的相关内容不会自动恢复。",
   "settings.modelProvider.deleteConfirmAction": "确认删除",
+  "settings.modelProvider.acpEdit": "编辑配置",
+  "settings.modelProvider.acpDeleteDescription":
+    "删除后该供应商不再可选。历史会话仍可见，但无法通过其他 Agent 继续。",
   "settings.modelProvider.testModel": "测试模型",
   "settings.modelProvider.testModel.enableProviderFirst": "请先启用供应商",
   "settings.modelProvider.testModel.providerUnavailable": "该供应商当前不可用，无法测试连接",

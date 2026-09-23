@@ -3366,6 +3366,9 @@ const enUS: Record<string, string> = {
   "settings.modelProvider.deleteConfirmDescription":
     "This removes the custom provider configuration. Related edits on the current settings page will not be restored automatically.",
   "settings.modelProvider.deleteConfirmAction": "Delete provider",
+  "settings.modelProvider.acpEdit": "Edit configuration",
+  "settings.modelProvider.acpDeleteDescription":
+    "This provider will no longer be available. Existing conversations remain visible but cannot continue with another Agent.",
   "settings.modelProvider.testModel": "Test model",
   "settings.modelProvider.testModel.enableProviderFirst": "Enable the provider first",
   "settings.modelProvider.testModel.providerUnavailable":

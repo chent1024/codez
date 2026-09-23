@@ -326,6 +326,7 @@ import { readAcpModelCatalog, saveAcpModels } from "#src/agent-runtime/acpProvid
 import {
   readAgentServersRegistry,
   saveAgentServerConfig,
+  deleteAgentServerConfig,
 } from "#src/agent-runtime/agentServersRegistry.js";
 
 const logger = createServiceLogger("zcode-agent-service");
@@ -3379,6 +3380,8 @@ export function createZCodeAgentService(
           name: server.name,
           installed: true,
           command: server.command,
+          configured: true,
+          args: [...server.args],
           configPath: registry.path,
         })),
         ...registry.issues.map((issue) => ({
@@ -3414,6 +3417,10 @@ export function createZCodeAgentService(
     },
     async saveAgentServer(input) {
       await saveAgentServerConfig(input);
+      return this.listAgentRuntimes();
+    },
+    async deleteAgentServer(id) {
+      await deleteAgentServerConfig(id);
       return this.listAgentRuntimes();
     },
     async saveAgentServerModels(input) {

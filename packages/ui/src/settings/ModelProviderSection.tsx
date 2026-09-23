@@ -1101,40 +1101,47 @@ export function ModelProviderSection({
         </p>
       ) : null}
       {templatePickerOpen ? (
-        acpCreateOpen ? (
-          <AcpProviderDetail
-            create
-            workspacePath={workspacePath}
-            configPath={acpStatuses[0]?.configPath}
-            onBack={() => setAcpCreateOpen(false)}
-            onSaved={(id) => {
-              setAcpCreateOpen(false);
-              setTemplatePickerOpen(false);
-              setSelectedNodeKey(`acp:${id}`);
-              void refreshAcpStatuses();
-              window.dispatchEvent(new Event("codez:acp-provider-models-changed"));
-            }}
-          />
-        ) : (
-          <ProviderTemplatePicker
-            templates={providerTemplates}
-            creating={creatingProvider}
-            onBack={() => setTemplatePickerOpen(false)}
-            onCreateAcp={() => setAcpCreateOpen(true)}
-            onCreateFromTemplate={(templateId) => {
-              return handleCreateProvider({ templateId });
-            }}
-            onCreateCustom={(label) => {
-              return handleCreateProvider({ providerName: label });
-            }}
-          />
-        )
+        <>
+          <div hidden={acpCreateOpen}>
+            <ProviderTemplatePicker
+              templates={providerTemplates}
+              creating={creatingProvider}
+              onBack={() => setTemplatePickerOpen(false)}
+              onCreateAcp={() => setAcpCreateOpen(true)}
+              onCreateFromTemplate={(templateId) => {
+                return handleCreateProvider({ templateId });
+              }}
+              onCreateCustom={(label) => {
+                return handleCreateProvider({ providerName: label });
+              }}
+            />
+          </div>
+          {acpCreateOpen ? (
+            <AcpProviderDetail
+              create
+              workspacePath={workspacePath}
+              configPath={acpStatuses[0]?.configPath}
+              onBack={() => setAcpCreateOpen(false)}
+              onSaved={(id) => {
+                setAcpCreateOpen(false);
+                setTemplatePickerOpen(false);
+                setSelectedNodeKey(`acp:${id}`);
+                void refreshAcpStatuses();
+                window.dispatchEvent(new Event("codez:acp-provider-models-changed"));
+              }}
+            />
+          ) : null}
+        </>
       ) : selectedNavItem?.type === "acp" ? (
         <AcpProviderDetail
           key={selectedNavItem.key}
           status={selectedNavItem.status}
           workspacePath={workspacePath}
           configPath={acpStatuses[0]?.configPath}
+          onDeleted={() => {
+            void refreshAcpStatuses();
+            window.dispatchEvent(new Event("codez:acp-provider-models-changed"));
+          }}
           onSaved={() => {
             void refreshAcpStatuses();
             window.dispatchEvent(new Event("codez:acp-provider-models-changed"));
