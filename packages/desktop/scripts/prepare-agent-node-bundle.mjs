@@ -22,7 +22,6 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptDir, "..");
 const repoRoot = resolve(desktopRoot, "..", "..");
 const cliBundlePath = resolve(repoRoot, "apps/zcode-cli/packages/cli/dist/zcode.cjs");
-const adaptersRoot = resolve(repoRoot, "apps/zcode-cli/packages/adapters");
 const pnpmRunEnv = {
   ...process.env,
   // pnpm 11 会在 apps/zcode-cli 子 workspace 执行 run 前触发 install；
@@ -111,10 +110,75 @@ const officialPluginPackages = [
     runtimeBuildScript: "scripts/build.mjs",
     stagedPath: "packages/node-repl-host",
   },
+  ...[
+    ["android-emulator-plugin", []],
+    ["documents-plugin", ["agents/visual-judge.md", "skills/docx/SKILL.md"]],
+    ["pdf-plugin", ["agents/visual-judge.md", "skills/pdf/SKILL.md"]],
+    ["presentations-plugin", ["agents/visual-judge.md", "skills/pptx/SKILL.md"]],
+    ["spreadsheets-plugin", ["agents/visual-judge.md", "skills/xlsx/SKILL.md"]],
+    ["image-search-plugin", [".mcp.json"]],
+    ["ios-simulator-plugin", []],
+    ["restore-legacy-sessions-plugin", []],
+    [
+      "plugin-creator-plugin",
+      [
+        "skills/plugin-creator/SKILL.md",
+        "skills/plugin-creator/scripts/create-basic-plugin.mjs",
+        "skills/plugin-creator/scripts/marketplace-files.mjs",
+        "skills/plugin-creator/scripts/upsert-dev-marketplace.mjs",
+        "skills/plugin-creator/scripts/scaffold-files.mjs",
+        "skills/plugin-creator/scripts/validate-plugin.mjs",
+        "skills/plugin-creator/references/plugin-json-spec.md",
+        "skills/plugin-creator/references/installing-and-updating.md",
+      ],
+    ],
+    ["skill-creator-plugin", []],
+    [
+      "zcode-guide-plugin",
+      [
+        "skills/zcode-configuration-guide/SKILL.md",
+        "skills/diagnosing-hooks/SKILL.md",
+        "skills/diagnosing-commands/SKILL.md",
+        "skills/diagnosing-skills/SKILL.md",
+        "skills/diagnosing-mcp/SKILL.md",
+        "skills/diagnosing-plugins/SKILL.md",
+      ],
+    ],
+    [
+      "zcode-cua-plugin",
+      ["docs/computer-use.md", "scripts/computer-use-client.mjs", "skills/computer-use/SKILL.md"],
+    ],
+  ].map(([name, requiredSeedPaths]) => ({
+    packageName: name,
+    relativePath: `apps/zcode-cli/packages/${name}`,
+    requiresRuntime: false,
+    requiredSeedPaths,
+    stagedPath: `packages/${name}`,
+  })),
 ];
+const localOfficialPluginSource =
+  process.env.CODEZ_OFFICIAL_PLUGIN_SOURCE ||
+  (process.platform === "darwin" ? "/Applications/ZCode.app/Contents/Resources/glm/packages" : "");
+
+function resolveOfficialPluginSource(plugin) {
+  const repositoryPath = resolve(repoRoot, plugin.relativePath);
+  if (existsSync(resolve(repositoryPath, ".zcode-plugin", "plugin.json"))) {
+    return repositoryPath;
+  }
+  const sourcePath = localOfficialPluginSource
+    ? resolve(localOfficialPluginSource, basename(plugin.stagedPath))
+    : "";
+  if (sourcePath && existsSync(resolve(sourcePath, ".zcode-plugin", "plugin.json"))) {
+    return sourcePath;
+  }
+  throw new Error(
+    `[prepare:agent-bundle] missing ${plugin.stagedPath}; set CODEZ_OFFICIAL_PLUGIN_SOURCE to a locally installed plugin packages directory`,
+  );
+}
 const includedOfficialPluginTopLevelPaths = new Set([
   ".mcp.json",
   ".zcode-plugin",
+  "LICENSE.txt",
   "README.md",
   // Electron 生产资源复制有独立白名单，遗漏 agents 会让首启 filesystem seed 永久缺少子代理。
   "agents",
@@ -222,7 +286,8 @@ function stageBundle() {
 
 function stageOfficialPlugins() {
   for (const plugin of officialPluginPackages) {
-    const sourceRoot = resolve(repoRoot, plugin.relativePath);
+    // 仅在本机打包时读取已有安装资产；受限插件文件不进入 Git，也不读取其用户配置。
+    const sourceRoot = resolveOfficialPluginSource(plugin);
     const manifestPath = resolve(sourceRoot, ".zcode-plugin", "plugin.json");
     if (!existsSync(manifestPath)) {
       throw new Error(`[prepare:agent-bundle] missing official plugin manifest: ${manifestPath}`);

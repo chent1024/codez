@@ -80,10 +80,12 @@ const OFFICIAL_CUA_REQUIRED_SEED_PATHS = [
 // zcode-guide 原本没有 requiredSeedPaths，seed 丢文件时会静默装出一个
 // 没有 /workflow 命令的插件——症状是命令不存在，没有任何诊断。commands/ 与技能正文都钉住。
 const OFFICIAL_ZCODE_GUIDE_REQUIRED_SEED_PATHS = [
-  "commands/workflow.md",
-  "skills/dynamic-workflows/SKILL.md",
-  "skills/dynamic-workflows/examples.md",
-  "skills/dynamic-workflows/patterns.md",
+  "skills/zcode-configuration-guide/SKILL.md",
+  "skills/diagnosing-hooks/SKILL.md",
+  "skills/diagnosing-commands/SKILL.md",
+  "skills/diagnosing-skills/SKILL.md",
+  "skills/diagnosing-mcp/SKILL.md",
+  "skills/diagnosing-plugins/SKILL.md",
 ] as const;
 
 export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = [
@@ -321,7 +323,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "../../zcode-guide-plugin",
       "../../../zcode-guide-plugin",
     ],
-    version: "0.2.0",
+    version: "0.3.0",
   },
   {
     // 产品决策：电脑控制回退为默认关闭，需用户在设置页显式开启。

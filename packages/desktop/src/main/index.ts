@@ -88,11 +88,8 @@ import { createDesktopTelemetryFetch } from "./desktopTelemetryFetch.js";
 import {
   acknowledgePostUpdateReleaseNotes,
   getAutoUpdaterState,
-  hydratePendingPostUpdateReleaseNotes,
   initAutoUpdater,
   onAutoUpdaterStateChanged,
-  refreshAutoUpdaterReleaseChannel,
-  resolveUpdateFeedSourceFromStartupConfig,
   syncAutoUpdaterStateToWindow,
   syncPostUpdateReleaseNotesToWindow,
   syncReadyUpdateToWindow,
@@ -132,7 +129,6 @@ import { applyAppIcon } from "./desktopWindowChrome.js";
 import { resolveWindowsAppUserModelIdForFlavor } from "../../scripts/desktop-product-identity.mjs";
 import type { DesktopWindowSize } from "./desktopWindowSize.js";
 import { maybeWarnArchitectureMismatch } from "./desktopArchitectureGuard.js";
-import { maybeBlockStartupForForceUpdate } from "./forceUpdateGuard.js";
 import { createWindowsDesktopTray, updateWindowsDesktopTrayMenu } from "./desktopTray.js";
 import { createWindowsCuaOperationIndicator } from "./windowsCuaOperationIndicator.js";
 import {
@@ -193,10 +189,7 @@ import {
   stopRemoteUsageArmsPeriodicSampling,
 } from "./desktopRemoteUsageArmsTelemetry.js";
 import { resolveCanonicalWslTarget } from "./desktopWslTargetResolver.js";
-import {
-  listRegisteredHostAgentProcessIds,
-  setBrowserUseGuestWebContentsIdsProvider,
-} from "./resourceManagerWindow.js";
+import { setBrowserUseGuestWebContentsIdsProvider } from "./resourceManagerWindow.js";
 import { createDesktopHelpConfigReader } from "./desktopHelpConfig.js";
 import { registerPlatformIpcHandlers } from "./desktopMainIpcPlatform.js";
 import {
@@ -209,7 +202,6 @@ import {
   configureDesktopStabilityTelemetry,
   getStabilityLifecycleScene,
   notifyStabilityAppExit,
-  notifyStabilityLifecycle,
   reportAgentProcessExitToArms,
   reportAgentProcessReadyToArms,
   reportAgentProcessStartToArms,
@@ -238,14 +230,7 @@ import {
 } from "./desktopNetworkTelemetry.js";
 import { applyDesktopChromiumNetworkPolicies } from "./desktopNetworkPolicy.js";
 import { mapZCodeEnvToArmsRumEnv } from "@zcode/shared";
-import {
-  findWindowsProcessesReferencingResourceMarkers,
-  probeWindowsPackagedResourceWritable,
-  resolveWindowsPackagedResourceLockMarkers,
-  runWindowsUpdateProcessCleanup,
-  snapshotWindowsPackagedResources,
-  WINDOWS_UPDATE_LOCK_RELEASE_GRACE_MS,
-} from "./windowsInstallResourceLocks.js";
+import { snapshotWindowsPackagedResources } from "./windowsInstallResourceLocks.js";
 import { mainMemoryDiagnosticsRegistry } from "./mainMemoryDiagnostics.js";
 
 registerLocalMediaPreviewScheme(protocol);
@@ -532,7 +517,6 @@ const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 const settingsFile = join(homedir(), ".codez", "v2", "setting.json");
 let activeAppShutdownPolicy = resolveAppShutdownPolicy("normal", process.platform);
 let activeAppShutdownKind: AppShutdownKind | null = null;
-const WINDOWS_AGENT_FORCE_KILL_TIMEOUT_MS = 2_000;
 
 const broadcastHub = new BroadcastHub();
 const taskRealtimeBus = new TaskRealtimeBus({ logger });
@@ -952,15 +936,6 @@ function syncImmediateAppSettings(patch: Partial<AppSettings>) {
     reconcileKeepAwakeBlocker();
   }
 
-  if (typeof patch.receivePreviewUpdates === "boolean") {
-    // receivePreviewUpdates 由 renderer host 写入 setting.json。
-    // main 进程的自动更新器不会订阅 host 设置变化，必须借 syncAppSettings 这条即时通道刷新 manifest channel。
-    refreshAutoUpdaterReleaseChannel(
-      patch.receivePreviewUpdates,
-      "settings receivePreviewUpdates changed",
-    );
-  }
-
   if (patch.shortcutBindings !== undefined) {
     // 快捷键改绑：
     // 落盘已完成（useSettings.update 先 await settingService.update 再走本通道），
@@ -1125,106 +1100,6 @@ function getRunningAgentSessionCount() {
   return [...hostRunningTaskCountMap.values()].reduce((total, count) => total + count, 0);
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, Math.max(ms, 0));
-    timer.unref?.();
-  });
-}
-
-async function execWithTimeout(
-  file: string,
-  args: string[],
-  timeoutMs: number,
-  spawnOptions: { windowsHide?: boolean; encoding?: BufferEncoding } = {},
-): Promise<{
-  timedOut: boolean;
-  code?: number | null;
-  signal?: NodeJS.Signals | null;
-  error?: string;
-}> {
-  const { execFile } = await import("node:child_process");
-  return new Promise((resolve) => {
-    let settled = false;
-    let timedOut = false;
-    const child = execFile(file, args, {
-      windowsHide: spawnOptions.windowsHide,
-      encoding: spawnOptions.encoding,
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        process.kill(child.pid!, "SIGKILL");
-      } catch {
-        // 进程可能已自行退出，忽略
-      }
-    }, timeoutMs);
-    child.on("close", (code, signal) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({ timedOut, code, signal });
-    });
-    child.on("error", (error) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve({ timedOut, error: error.message });
-    });
-  });
-}
-
-async function forceTerminateWindowsAgentProcesses(pids: number[]): Promise<
-  Array<{
-    pid: number;
-    timedOut: boolean;
-    code?: number | null;
-    signal?: NodeJS.Signals | null;
-    error?: string;
-  }>
-> {
-  const uniquePids = [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))];
-  return Promise.all(
-    uniquePids.map((pid) =>
-      execWithTimeout(
-        "taskkill",
-        ["/PID", String(pid), "/T", "/F"],
-        WINDOWS_AGENT_FORCE_KILL_TIMEOUT_MS,
-        {
-          windowsHide: true,
-        },
-      ).then((result) => ({ pid, ...result })),
-    ),
-  );
-}
-
-function logWindowsPackagedResourceSnapshot(stage: string) {
-  logger.info(
-    `[auto-update] Windows packaged resources snapshot (${stage}): ${JSON.stringify(
-      snapshotWindowsPackagedResources(process.resourcesPath),
-    )}`,
-  );
-}
-
-function logWindowsPackagedResourceWritableProbe(stage: string) {
-  const probes = probeWindowsPackagedResourceWritable(process.resourcesPath);
-  const failed = probes.filter((probe) => probe.exists && !probe.writable);
-  logger.info(
-    `[auto-update] Windows packaged resources writable probe (${stage}): ${JSON.stringify(probes)}`,
-  );
-  if (failed.length > 0) {
-    logger.warn(
-      `[auto-update] Windows packaged resource dirs are not writable (${stage}): ${JSON.stringify(
-        failed,
-      )}`,
-    );
-  }
-}
-
 function logWindowsBundledRuntimeIntegrityDiagnostic() {
   if (process.platform !== "win32" || !app.isPackaged) {
     return;
@@ -1247,60 +1122,6 @@ function logWindowsBundledRuntimeIntegrityDiagnostic() {
       snapshotWindowsPackagedResources(process.resourcesPath),
     )}`,
   );
-}
-
-async function prepareWindowsProcessesForUpdateInstall() {
-  const trackedAgentCount = listRegisteredHostAgentProcessIds().length;
-
-  logger.info(`[auto-update] preparing Windows update install: trackedAgent=${trackedAgentCount}`);
-  logWindowsPackagedResourceSnapshot("before-dispose");
-
-  const resourceLockMarkers = resolveWindowsPackagedResourceLockMarkers(process.resourcesPath);
-  // prepareAppQuit 已经用同一屏障回收每窗口唯一 Host，并在 7.5 秒强杀、
-  // 9 秒收口；Windows 专项阶段不能再追加一轮等待，也不能用退出前记录的 Host/Agent PID
-  // 强杀，因为 PID 可能已经复用。这里只清理实时扫描仍引用随包资源的 runtime 进程，
-  // 当前 main/renderer 的最终退出交给 updater 与 NSIS。
-  const cleanup = await runWindowsUpdateProcessCleanup({
-    resourceLockMarkers,
-    lockReleaseGraceMs: WINDOWS_UPDATE_LOCK_RELEASE_GRACE_MS,
-    scan: findWindowsProcessesReferencingResourceMarkers,
-    terminate: forceTerminateWindowsAgentProcesses,
-    delay,
-  });
-
-  logger.info(
-    `[auto-update] Windows resource lock scan: matches=${cleanup.initialLockProcesses.length} trackedAgent=${trackedAgentCount} details=${JSON.stringify(
-      cleanup.initialLockProcesses,
-    )}`,
-  );
-  for (const error of cleanup.errors) {
-    logger.warn(`[auto-update] Windows process cleanup degraded: ${error}`);
-  }
-
-  if (cleanup.terminationPids.length === 0) {
-    logWindowsPackagedResourceWritableProbe("no-lock-processes");
-    return;
-  }
-
-  // 少量 Windows 用户更新后安装目录里的 bundled agent 文件会缺失。
-  // 根因通常是 NSIS 覆盖 resources/glm 等目录时，旧 agent/helper 进程或杀软触发的残留进程仍持有句柄；
-  // 只杀 host 上报过的 agent pid 会漏掉未登记或已经脱离登记的后代。这里在更新前按命令行再扫描一次安装资源路径，
-  // 对仍引用随包资源的进程树做强制清理，降低半更新导致环境损坏的概率。
-  logger.info(
-    `[auto-update] Windows taskkill results: ${JSON.stringify(cleanup.terminationResults)}`,
-  );
-  logger.info(
-    `[auto-update] Windows resource lock release grace elapsed: ${WINDOWS_UPDATE_LOCK_RELEASE_GRACE_MS}ms`,
-  );
-
-  if (cleanup.remainingLockProcesses.length > 0) {
-    logger.warn(
-      `[auto-update] Windows resource lock processes still alive after taskkill: ${JSON.stringify(
-        cleanup.remainingLockProcesses,
-      )}`,
-    );
-  }
-  logWindowsPackagedResourceWritableProbe("after-taskkill");
 }
 
 function shouldConfirmAppQuit() {
@@ -1936,29 +1757,11 @@ app.whenReady().then(async () => {
     logger.warn("[desktop-network] Chromium network policy bootstrap failed:", error);
   }
 
-  await hydratePendingPostUpdateReleaseNotes(mainSettingService);
   logWindowsBundledRuntimeIntegrityDiagnostic();
 
-  // 启动自动更新检查（后台执行，不阻塞主界面）
-  // Preview 身份无论连接哪个后端都不自动更新：stable feed 上只分发正式 ZCode 安装包，
-  // 不向 Preview 渠道提供更新。
+  // CodeZ 不接收官方 ZCode 的在线应用更新；禁用更新器，保留现有 IPC 的惰性空状态。
   void initAutoUpdater({
-    enabled: ZCODE_PRODUCT_FLAVOR === "production",
-    onBeforeQuitAndInstall: async () => {
-      notifyStabilityLifecycle("update_install");
-      await prepareAppQuit("auto-update quitAndInstall", "update-install");
-      if (process.platform === "win32") {
-        await prepareWindowsProcessesForUpdateInstall();
-      }
-    },
-    settingService: mainSettingService,
-    locale: currentApplicationLocale,
-    deviceMid,
-    resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
-    updateFeedSource: resolveUpdateFeedSourceFromStartupConfig({
-      argv: process.argv,
-      env: process.env,
-    }),
+    enabled: false,
   });
 
   if (process.platform === "darwin" || process.platform === "win32") {
@@ -2177,33 +1980,6 @@ app.whenReady().then(async () => {
     stateFile: join(app.getPath("userData"), "zcode-data-size-telemetry.json"),
   });
   registerDesktopNetworkTelemetry(logger);
-
-  // 本地未打包 dev 构建（app.isPackaged === false）必须跳过远端强制升级 gate。
-  // 原因：force-update gate 只看 ZCODE_ENV === "production"，但 dev 构建（如 dev:desktop:cua
-  // 连真实后端测 computer use）虽指向 production 后端，版本号却滞后于线上 release（feature
-  // 分支不 bump 版本），会被 release minimalVersion 误判为"需强制升级"而启动秒退。force-update
-  // 是面向打包发布客户端的安全门，对未打包 dev 运行时无意义。打包版 app.isPackaged === true，
-  // gate 照常生效，对真实用户零影响。
-  const skipForceUpdateForLocalDevRuntime = !app.isPackaged;
-  const forceUpdateGuardResult =
-    ZCODE_PRODUCT_FLAVOR === "production" && !skipForceUpdateForLocalDevRuntime
-      ? await maybeBlockStartupForForceUpdate({
-          locale: currentApplicationLocale,
-          logger,
-          endpointOrigin: await resolveCurrentZCodeEndpointOrigin(),
-          onBlocked: () => {
-            forceUpdateMainWindowCreationBlocked = true;
-          },
-        })
-      : { blocked: false };
-  if (ZCODE_PRODUCT_FLAVOR !== "production") {
-    logger.info("[force-update] Preview 跳过远端强制升级检查");
-  } else if (skipForceUpdateForLocalDevRuntime) {
-    logger.info("[force-update] 本地 dev 构建（未打包）跳过远端强制升级检查");
-  }
-  if (forceUpdateGuardResult.blocked) {
-    return;
-  }
 
   logger.info("[startup] 创建主窗口");
   await primaryWindowCoordinator.ensurePrimaryWindow("app-ready");

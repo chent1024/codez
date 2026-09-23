@@ -1,10 +1,4 @@
-# codez-app-identity Specification
-
-## Purpose
-
-让 CodeZ 与官方 ZCode 在桌面系统和本机数据上明确区分，使用户可以并排安装、分别启动两款应用，并使各自的默认工作区和设置互不覆盖。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Distinct desktop identity
 
@@ -48,6 +42,8 @@ CodeZ SHALL 默认使用 `~/.codez` 作为自身数据根目录，非项目会�
 
 - **WHEN** CodeZ 启动并读取或保存应用设置
 - **THEN** 设置服务使用当前 CodeZ 数据基目录下的 `.codez/v2/setting.json`，不读取或写入官方 ZCode 的 `.zcode/v2/setting.json`
+
+## ADDED Requirements
 
 ### Requirement: No official desktop app updates
 

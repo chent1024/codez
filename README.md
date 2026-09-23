@@ -1,7 +1,7 @@
-# ZCode
+# CodeZ
 
 <div align="center">
-  <img src="public/logo/icons/1024x1024.png" alt="ZCode" width="128" height="128" />
+  <img src="public/logo/icons/1024x1024.png" alt="CodeZ" width="128" height="128" />
 </div>
 <p align="center">
   <a href="https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=47ag983c-8fcb-4d6d-814b-5395193a712c&amp;qr_code=true">飞书社群</a> ·
@@ -11,7 +11,7 @@
   简体中文 | <a href="README.en.md">English</a>
 </p>
 
-ZCode 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
+CodeZ 是 AI 编程工作台，提供桌面应用、浏览器界面和终端 Agent。本仓库包含客户端、后端服务、共享 UI，以及 Agent CLI 与运行时源码。
 
 | 入口                 | 用途                                                           | 开发命令                       |
 | -------------------- | -------------------------------------------------------------- | ------------------------------ |
@@ -149,12 +149,14 @@ pnpm bundle:desktop -- --os win --arch x64
 pnpm bundle:desktop -- --help
 ```
 
-默认目标为 macOS arm64，默认输出目录为 `packages/desktop/dist/`。`--os` 支持 `mac`、`win`、`linux`，`--arch` 支持 `x64`、`arm64`；实际打包与签名需要目标平台对应的工具和配置。
+默认产出正式 CodeZ 的 macOS arm64 包，输出目录为 `packages/desktop/dist/`。显式设置 `ZCODE_ENV=test` 或 `ZCODE_PREVIEW_IDENTITY=1` 可构建 Preview。`--os` 支持 `mac`、`win`、`linux`，`--arch` 支持 `x64`、`arm64`；实际打包与签名需要目标平台对应的工具和配置。
 
-安装：双击打开产物 DMG，将 ZCode 拖入"应用程序"。本地构建未签名，首次打开若被 macOS 拦截，执行：
+缺失的内置插件资产在本机打包时从已安装的 `/Applications/ZCode.app/Contents/Resources/glm/packages` 读取；其他平台可通过 `CODEZ_OFFICIAL_PLUGIN_SOURCE` 指定同结构的插件目录。构建会拒绝缺失必需插件的包，导入的插件文件不进入 Git。分享包含第三方受限资产的安装包前需确认相应授权。
+
+安装：双击打开产物 DMG，将 CodeZ 拖入"应用程序"。本地构建未签名，首次打开若被 macOS 拦截，执行：
 
 ```bash
-sudo xattr -rd com.apple.quarantine /Applications/ZCode.app
+sudo xattr -rd com.apple.quarantine /Applications/CodeZ.app
 ```
 
 ### ZCode 命令行版
