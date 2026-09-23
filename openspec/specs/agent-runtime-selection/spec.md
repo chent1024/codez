@@ -8,7 +8,7 @@
 
 ### Requirement: ACP as a model provider form
 
-CodeZ SHALL 在现有模型供应商列表提供 ACP 供应商，列出受支持 ACP CLI 的安装、认证及可用状态。用户 SHALL 在现有输入框模型选择器中选择 ACP 供应商公布的模型与思考等级；输入框和设置页 SHALL NOT 增加独立的 Runtime 选择器或配置区域。
+CodeZ SHALL 在现有模型供应商列表提供已配置的 ACP 供应商，列出其安装、认证及可用状态。用户 SHALL 在现有输入框模型选择器中选择 ACP 供应商公布的模型与思考等级；输入框和设置页 SHALL NOT 增加独立的 Runtime 选择器或配置区域。
 
 ACP 供应商的创建、恢复和执行 SHALL 不以 ZCode 订阅状态、ZCode CLI 进程或 API 供应商配置为前提。用户可以只配置并使用 ACP 供应商；各 Agent 使用自身支持的 API 凭据或登录方式。CodeZ 不把一份通用 API 凭据自动注入不支持它的 ACP Agent。
 
@@ -61,6 +61,18 @@ CodeZ SHALL 依据 Runtime 已协商能力控制功能入口；缺少能力时�
 - **WHEN** ACP Agent 不支持某个 ZCode 专属会话操作
 - **THEN** 操作不可用或返回明确错误，原会话保持可继续使用
 
+#### Scenario: ACP auxiliary conversation
+
+- **WHEN** 用户在已有 ACP 会话中打开辅助对话，或带首条文本创建辅助对话
+- **THEN** Host 使用同一 ACP Runtime 创建独立子会话，继承父会话的模型与思考等级，将父子任务绑定持久保存；首条文本仅发送给子会话，父会话可继续使用
+- **AND** 重复创建命令返回同一子会话，重启后子会话仍按原 Agent 身份恢复；配置失效时历史仍可见且不改投其他 Runtime
+
+#### Scenario: Desktop local attachments in ACP prompts
+
+- **WHEN** 桌面用户向 ACP 会话发送本地图片或文件
+- **THEN** Host 在发送前校验本地文件并限制大小，图片仅在 Agent 公布 image prompt 能力时作为图片块发送，普通文件作为 ACP 嵌入式 resource 发送；用户转录保留附件元信息但不保存附件正文或 base64 内容
+- **AND** Agent 不支持图片、文件不可读取或附件引用不是 Host 本地绝对路径时保留输入草稿并显示具体错误，不向 Agent 发送部分输入
+
 #### Scenario: Runtime-specific thinking control
 
 - **WHEN** 当前 ACP Agent 公布了可设置的思考等级
@@ -95,13 +107,13 @@ CodeZ SHALL 在实际执行 Host 读取 `~/.codez/v2/agent-servers.json` 的 `ag
 - **WHEN** 既有 ACP 会话的配置项被删除、不可执行，或同一 ID 指向不同 Agent
 - **THEN** 历史仍可见，但会话不可继续；CodeZ 不改投 ZCode CLI 或另一 ACP Agent
 
-现阶段四个内置 ACP 供应商 SHALL 与配置注册表并存。配置方式经过陌生 Agent 和现有会话恢复验收之前 SHALL NOT 移除内置入口。
+配置注册表是新建 ACP 会话的唯一供应商入口。原内置 ACP ID 不再出现在添加页、模型选择器或新建入口；既有会话仍可按原绑定恢复，不得自动改投同名的新配置项。迁移到配置项时必须先验证 Agent 命令与原生 session 可恢复，再持久改写绑定和指纹。
 
 ### Requirement: Explicit ACP model sync and cached selection
 
 CodeZ SHALL 在模型设置中通过用户手动同步请求 ACP Agent 公布的模型和各模型思考等级。用户切换模型启用状态时 SHALL 立即持久保存，失败时恢复原状态并显示错误，不要求再次点击保存。保存后的模型列表 SHALL 持久缓存并在输入框既有模型选择器中显示；打开设置、进入会话或重启 CodeZ 不得隐式重新请求 Agent 模型信息。只有下一次用户手动同步才刷新候选。配置命令或参数改变后，旧缓存不得用于新进程身份。
 
-内置 WorkBuddy 的安装状态 SHALL 根据固定命令路径的可执行权限判断；打开设置页和启动该 Agent 不执行应用签名、开发团队或 Bundle ID 验证。
+配置式 WorkBuddy 的安装状态 SHALL 根据用户配置命令的可执行权限判断；打开设置页和启动该 Agent 不执行应用签名、开发团队或 Bundle ID 验证。
 
 CodeZ SHALL 在设置页与模型选择器中展示 Agent 模型说明中明确提供的免费、折扣或积分倍率，不推测实际价格、不补写或手工标记。不同 ID 的同名模型 SHALL 保持独立可选，并展示足以区分它们的 Agent 说明或 ID。模型设置 SHALL 沿用现有设置页的紧凑列表、排版和语义色。
 
@@ -127,7 +139,7 @@ CodeZ SHALL 在设置页与模型选择器中展示 Agent 模型说明中明确�
 
 ### Requirement: Manage configured ACP providers in model settings
 
-CodeZ SHALL 在现有供应商添加流程中选择 ACP 后直接展示自定义 ACP 配置表单，无需再次选择自定义卡片；表单的标题、返回和布局与 API 供应商添加页一致。已配置的自定义 ACP 供应商 SHALL 可修改显示名称、绝对命令路径和字符串参数数组，稳定 ID SHALL 不可修改；内置 ACP 供应商 SHALL 不提供这些操作。保存失败 SHALL 保留编辑草稿并显示错误。
+CodeZ SHALL 在现有供应商添加流程中选择 ACP 后直接展示自定义 ACP 配置表单，无需再次选择自定义卡片；表单的标题、返回和布局与 API 供应商添加页一致。已配置的 ACP 供应商 SHALL 可修改显示名称、绝对命令路径和字符串参数数组，稳定 ID SHALL 不可修改。保存失败 SHALL 保留编辑草稿并显示错误。
 
 #### Scenario: Add a custom ACP provider
 
@@ -146,7 +158,7 @@ CodeZ SHALL 在现有供应商添加流程中选择 ACP 后直接展示自定义
 
 ### Requirement: Delete a configured ACP provider
 
-CodeZ SHALL 在用户确认后从 Host 注册表移除指定的自定义 ACP 供应商，不删除其历史会话；删除后模型选择器不再提供该供应商。删除失败 SHALL 保留配置并显示错误。内置 ACP 供应商 SHALL 不可删除。
+CodeZ SHALL 在用户确认后从 Host 注册表移除指定的自定义 ACP 供应商，不删除其历史会话；删除后模型选择器不再提供该供应商。删除失败 SHALL 保留配置并显示错误。
 
 #### Scenario: Confirmed deletion
 

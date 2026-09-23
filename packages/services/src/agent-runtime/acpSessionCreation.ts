@@ -22,6 +22,7 @@ export async function createAcpManagedSession(input: {
   workspaceKey: string;
   modelId?: string;
   thoughtLevel?: string;
+  parentTaskId?: string;
   spec: AcpRuntimeSpec;
   resolveLaunch: (spec: AcpRuntimeSpec) => Promise<{ executable: string; args: readonly string[] }>;
   isMemoryEnabled: () => boolean | Promise<boolean>;
@@ -73,6 +74,7 @@ export async function createAcpManagedSession(input: {
       workspacePath: input.workspacePath,
       model: connection.modelOptions().find((model) => model.selected)?.id,
       thoughtLevel: connection.thinkingLevels().find((level) => level.selected)?.value,
+      ...(input.parentTaskId ? { forkedFromTaskId: input.parentTaskId } : {}),
       ...(input.workspaceIdentity ? { workspaceIdentity: input.workspaceIdentity } : {}),
       createdAt: now,
       updatedAt: now,

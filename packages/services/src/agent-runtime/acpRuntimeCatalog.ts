@@ -25,8 +25,8 @@ export interface AcpRuntimeSpec {
   fingerprint?: string;
 }
 
-/** 首批可选 ACP 入口；实际安装状态与能力以本机探测和握手为准。 */
-export const ACP_RUNTIME_CATALOG: readonly AcpRuntimeSpec[] = [
+/** 仅供迁移前旧会话恢复；新建与供应商列表只读取 Host 配置注册表。 */
+const LEGACY_ACP_RUNTIME_CATALOG: readonly AcpRuntimeSpec[] = [
   {
     id: "qoder-acp",
     name: "Qoder",
@@ -61,14 +61,19 @@ export const ACP_RUNTIME_CATALOG: readonly AcpRuntimeSpec[] = [
   },
 ];
 
-export function getAcpRuntimeSpec(id: AgentRuntimeId): AcpRuntimeSpec | null {
-  return ACP_RUNTIME_CATALOG.find((item) => item.id === id) ?? null;
+export function getLegacyAcpRuntimeSpec(id: AgentRuntimeId): AcpRuntimeSpec | null {
+  return LEGACY_ACP_RUNTIME_CATALOG.find((item) => item.id === id) ?? null;
 }
 
 /** 格式合法不等于可执行；每次创建或恢复都以 Host 当下的注册表为准。 */
-export async function resolveAcpRuntimeSpec(id: AgentRuntimeId): Promise<AcpRuntimeSpec | null> {
-  const builtin = getAcpRuntimeSpec(id);
-  if (builtin) return builtin;
+export async function resolveAcpRuntimeSpec(
+  id: AgentRuntimeId,
+  options: { restoreLegacy?: boolean } = {},
+): Promise<AcpRuntimeSpec | null> {
+  if (options.restoreLegacy) {
+    const legacy = getLegacyAcpRuntimeSpec(id);
+    if (legacy) return legacy;
+  }
   const registry = await readAgentServersRegistry();
   const configured = registry.servers.find((item) => item.id === id);
   return configured

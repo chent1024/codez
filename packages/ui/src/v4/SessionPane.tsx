@@ -2603,7 +2603,7 @@ export function SessionPane({
           toast("当前会话只能使用创建时的 ACP 供应商");
           return "blocked" as const;
         }
-        if (readyAttachments.length || sharedContextRefs?.length || contextAttachmentCount > 0) {
+        if (sharedContextRefs?.length || contextAttachmentCount > 0) {
           toast("当前 ACP Runtime 暂不支持此类附件或引用");
           return "blocked" as const;
         }
@@ -2620,7 +2620,10 @@ export function SessionPane({
                 modelId: submission.modelSelection.modelId,
                 thoughtLevel: submission.modelSelection.options?.reasoningLevel,
               },
-              firstInput: { text },
+              firstInput: {
+                text,
+                ...(readyAttachments.length ? { attachments: readyAttachments } : {}),
+              },
             },
             null,
           );
@@ -2651,7 +2654,11 @@ export function SessionPane({
           if (configAck.status !== "accepted")
             throw new Error(configAck.reasonCode ?? "ACP 模型配置未被接纳");
         }
-        const ack = await dispatchSubmissionCommand("sendText", { text }, sessionId);
+        const ack = await dispatchSubmissionCommand(
+          "sendText",
+          { text, ...(readyAttachments.length ? { attachments: readyAttachments } : {}) },
+          sessionId,
+        );
         if (ack.status !== "accepted" && ack.status !== "duplicate")
           throw new Error(ack.reasonCode ?? "ACP 输入未被接纳");
         return "sent" as const;

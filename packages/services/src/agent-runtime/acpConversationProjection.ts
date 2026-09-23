@@ -1,5 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- ACP 更新、回放与 V4 投影共享同一会话状态。 */
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type {
   SessionNotification,
   PromptResponse,
@@ -12,6 +13,7 @@ import {
   type PlanState,
   type PendingInteraction,
 } from "@zcode/shared/zcode-protocol-v4";
+import type { AttachmentRef } from "@zcode/shared/zcode-protocol-v4";
 import type { AcpTranscriptEntry } from "#src/agent-runtime/acpTranscriptStore.js";
 import type { AcpModelOption, AcpThinkingLevel } from "#src/agent-runtime/acpConnection.js";
 import { buildAcpProjectionSnapshot } from "#src/agent-runtime/acpProjectionSnapshot.js";
@@ -60,7 +62,22 @@ export class AcpConversationProjection {
           .filter((block) => block.type === "text")
           .map((block) => block.text)
           .join("\n");
-        this.beginTurn(entry.commandId, text);
+        const attachments: AttachmentRef[] = entry.content.flatMap((block) => {
+          if (block.type !== "resource_link" || !block.uri.startsWith("file:")) return [];
+          try {
+            return [
+              {
+                ref: fileURLToPath(block.uri),
+                fileName: block.name,
+                mime: block.mimeType ?? "application/octet-stream",
+                bytes: block.size ?? 0,
+              },
+            ];
+          } catch {
+            return [];
+          }
+        });
+        this.beginTurn(entry.commandId, text, attachments);
       } else if (entry.kind === "update") {
         this.applyUpdate({ sessionId: this.taskId, update: entry.update });
       } else {
@@ -71,7 +88,7 @@ export class AcpConversationProjection {
       this.finishTurn({ error: "ACP turn outcome is unknown after process exit" });
   }
 
-  beginTurn(commandId: string, text: string): void {
+  beginTurn(commandId: string, text: string, attachments?: readonly AttachmentRef[]): void {
     if (this.activeTurnId) throw new Error("ACP projection already has an active turn");
     this.anonymousChunkRow = null;
     const turnId = randomUUID();
@@ -94,6 +111,7 @@ export class AcpConversationProjection {
       text,
       origin: "realUser",
       sourceCommandId: commandId,
+      ...(attachments?.length ? { attachments: [...attachments] } : {}),
     });
   }
 

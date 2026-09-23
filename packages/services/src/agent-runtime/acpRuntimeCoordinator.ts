@@ -1,15 +1,25 @@
 /* eslint-disable max-lines -- ACP session lifecycle, restore, and command admission share one owner. */
 import type { ContentBlock, RequestPermissionRequest } from "@agentclientprotocol/sdk";
+import { open, realpath, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { isAbsolute } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { AgentRuntimeId, ZCodeTaskMeta } from "@zcode/shared";
 import type { AgentRuntimeConfigPreview } from "#src/zcode-agent/zcodeAgent.js";
 import { discoverAcpRuntimeConfig } from "#src/agent-runtime/acpConfigDiscovery.js";
-import type { ConversationSnapshot } from "@zcode/shared/zcode-protocol-v4";
+import type {
+  AttachmentRef,
+  ConversationSnapshot,
+  V4AttachmentReadParams,
+  V4AttachmentReadResult,
+} from "@zcode/shared/zcode-protocol-v4";
 import { getZCodeDataRootDir } from "#src/paths.js";
 import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { AcpConnection } from "#src/agent-runtime/acpConnection.js";
 import { AcpConversationProjection } from "#src/agent-runtime/acpConversationProjection.js";
 import { AcpTranscriptStore } from "#src/agent-runtime/acpTranscriptStore.js";
 import { createAcpManagedSession } from "#src/agent-runtime/acpSessionCreation.js";
+import { prepareAcpPromptAttachments } from "#src/agent-runtime/acpPromptAttachments.js";
 import {
   createAcpSessionObserver,
   createManagedAcpSession,
@@ -78,6 +88,7 @@ export class AcpRuntimeCoordinator {
       runtimeId: AgentRuntimeId;
       modelId?: string;
       thoughtLevel?: string;
+      parentTaskId?: string;
     },
   ): Promise<ZCodeTaskMeta> {
     const key = sessionKey(input, input.commandId);
@@ -98,14 +109,20 @@ export class AcpRuntimeCoordinator {
       runtimeId: AgentRuntimeId;
       modelId?: string;
       thoughtLevel?: string;
+      parentTaskId?: string;
     },
   ): Promise<ZCodeTaskMeta> {
-    const spec = await resolveAcpRuntimeSpec(input.runtimeId);
+    // 旧内置项仅允许从已验证的历史父会话派生；顶层新建仍只使用配置注册表。
+    const spec = await resolveAcpRuntimeSpec(input.runtimeId, {
+      restoreLegacy: Boolean(input.parentTaskId),
+    });
     if (!spec) throw new Error(`Unsupported ACP Runtime ${input.runtimeId}`);
     const existing = await this.taskIndex.getTaskMeta({ ...input, taskId: input.commandId });
     if (existing) {
       if (existing.runtimeId !== input.runtimeId)
         throw new Error("ACP create command belongs to another Runtime");
+      if (existing.forkedFromTaskId !== input.parentTaskId)
+        throw new Error("ACP create command belongs to another parent session");
       return existing;
     }
     const taskId = input.commandId;
@@ -119,11 +136,14 @@ export class AcpRuntimeCoordinator {
       workspaceKey: workspaceKey(input),
       modelId: input.modelId,
       thoughtLevel: input.thoughtLevel,
+      parentTaskId: input.parentTaskId,
       spec,
       resolveLaunch: this.resolveLaunch,
       isMemoryEnabled: this.isMemoryEnabled,
       syncTaskMetaAtGroupedTop: async (meta) => {
-        await this.taskIndex.syncTaskMetaAtGroupedTop({ meta });
+        // 辅助对话是已有任务的子会话；持久化绑定后由侧面板呈现，不作为新顶层任务插队。
+        if (input.parentTaskId) await this.taskIndex.syncTaskMeta({ meta });
+        else await this.taskIndex.syncTaskMetaAtGroupedTop({ meta });
       },
       makeObserver: (projection, transcript, pending, current) =>
         this.makeObserver(input, taskId, projection, transcript, pending, current),
@@ -153,7 +173,9 @@ export class AcpRuntimeCoordinator {
     );
     projection.restore((await transcript.read()) ?? []);
     try {
-      const spec = await resolveAcpRuntimeSpec(meta.runtimeId ?? "zcode-cli");
+      const spec = await resolveAcpRuntimeSpec(meta.runtimeId ?? "zcode-cli", {
+        restoreLegacy: true,
+      });
       if (!spec || !meta.nativeSessionId) throw new Error("ACP task binding is incomplete");
       if (meta.agentServerFingerprint && meta.agentServerFingerprint !== spec.fingerprint)
         throw new Error("ACP Agent configuration changed; this session cannot continue safely");
@@ -222,7 +244,12 @@ export class AcpRuntimeCoordinator {
   }
 
   async sendPrompt(
-    target: AcpWorkspaceTarget & { taskId: string; commandId: string; text: string },
+    target: AcpWorkspaceTarget & {
+      taskId: string;
+      commandId: string;
+      text: string;
+      attachments?: readonly AttachmentRef[];
+    },
   ): Promise<"accepted" | "duplicate"> {
     const managed = this.active.get(sessionKey(target, target.taskId));
     if (!managed) throw new Error("ACP session is not loaded");
@@ -231,10 +258,19 @@ export class AcpRuntimeCoordinator {
     if (managed.acceptedCommandIds.has(target.commandId)) return "duplicate";
     if (managed.projection.snapshot().control.phase === "running")
       throw new Error("ACP session is busy");
-    const content: ContentBlock[] = [{ type: "text", text: target.text }];
-    await managed.transcript.appendPrompt(target.commandId, content);
+    // 先校验全部附件，再持久接纳输入；任何图片能力/路径失败都不会启动部分 prompt。
+    const prepared = await prepareAcpPromptAttachments(
+      target.attachments ?? [],
+      managed.connection.initializeResponse.agentCapabilities?.promptCapabilities?.image === true,
+    );
+    const textBlock: ContentBlock = { type: "text", text: target.text };
+    const content: ContentBlock[] = [textBlock, ...prepared.promptBlocks];
+    await managed.transcript.appendPrompt(target.commandId, [
+      textBlock,
+      ...prepared.transcriptBlocks,
+    ]);
     managed.acceptedCommandIds.add(target.commandId);
-    managed.projection.beginTurn(target.commandId, target.text);
+    managed.projection.beginTurn(target.commandId, target.text, target.attachments);
     managed.activeCommandId = target.commandId;
     managed.turnSettled = false;
     managed.meta = { ...managed.meta, updatedAt: Date.now(), status: "running" };
@@ -267,6 +303,62 @@ export class AcpRuntimeCoordinator {
     const projection = this.active.get(key)?.projection ?? this.unavailable.get(key);
     if (!projection) throw new Error("ACP session is not loaded");
     return projection.rowsRange(target.beforeRowId, target.limit);
+  }
+
+  async readAttachment(
+    target: AcpWorkspaceTarget & V4AttachmentReadParams,
+  ): Promise<V4AttachmentReadResult> {
+    if (!isAbsolute(target.ref)) throw new Error("fault.attachment.previewRefNotAuthorized");
+    const transcript = new AcpTranscriptStore(
+      workspaceKey(target),
+      target.sessionId,
+      getZCodeDataRootDir(),
+    );
+    const entries = (await transcript.read()) ?? [];
+    const uri = pathToFileURL(target.ref).href;
+    const matched = entries.some(
+      (entry) =>
+        entry.kind === "prompt" &&
+        entry.content.some((block) => block.type === "resource_link" && block.uri === uri),
+    );
+    if (!matched) throw new Error("fault.attachment.previewRefNotAuthorized");
+    const path = await realpath(target.ref);
+    const info = await stat(path);
+    if (!info.isFile() || info.size > 20 * 1024 * 1024)
+      throw new Error("fault.attachment.previewRangeInvalid");
+    const attachment = entries
+      .flatMap((entry) => (entry.kind === "prompt" ? entry.content : []))
+      .find((block) => block.type === "resource_link" && block.uri === uri);
+    const mediaType = attachment?.type === "resource_link" ? attachment.mimeType : undefined;
+    if (!mediaType || (!mediaType.startsWith("image/") && mediaType !== "application/pdf"))
+      throw new Error("fault.attachment.readUnsupported");
+    if (target.offset > info.size) throw new Error("fault.attachment.previewRangeInvalid");
+    const length = Math.min(target.limit, info.size - target.offset);
+    const buffer = Buffer.alloc(length);
+    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      let bytesRead = 0;
+      while (bytesRead < length) {
+        const result = await handle.read(
+          buffer,
+          bytesRead,
+          length - bytesRead,
+          target.offset + bytesRead,
+        );
+        if (result.bytesRead === 0) break;
+        bytesRead += result.bytesRead;
+      }
+      if (bytesRead !== length) throw new Error("fault.attachment.previewRangeInvalid");
+    } finally {
+      await handle.close();
+    }
+    const nextOffset = target.offset + length;
+    return {
+      dataBase64: buffer.toString("base64"),
+      mediaType,
+      totalBytes: info.size,
+      nextOffset: nextOffset < info.size ? nextOffset : null,
+    };
   }
 
   async hasAcceptedCommand(

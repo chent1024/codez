@@ -316,12 +316,7 @@ import {
 import type { PipSessionEvent } from "@zcode/zcode-cua/pip-session";
 import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
 import { AcpV4Bridge } from "#src/agent-runtime/acpV4Bridge.js";
-import {
-  ACP_RUNTIME_CATALOG,
-  acpSpecIdentity,
-  resolveAcpRuntimeCommand,
-  resolveAcpRuntimeSpec,
-} from "#src/agent-runtime/acpRuntimeCatalog.js";
+import { acpSpecIdentity, resolveAcpRuntimeSpec } from "#src/agent-runtime/acpRuntimeCatalog.js";
 import { readAcpModelCatalog, saveAcpModels } from "#src/agent-runtime/acpProviderModels.js";
 import {
   readAgentServersRegistry,
@@ -3344,28 +3339,6 @@ export function createZCodeAgentService(
   return {
     async listAgentRuntimes() {
       const registry = await readAgentServersRegistry();
-      const agents = await Promise.all(
-        ACP_RUNTIME_CATALOG.map(async (spec) => {
-          try {
-            await resolveAcpRuntimeCommand(spec);
-            return {
-              id: spec.id,
-              name: spec.name,
-              installed: true,
-              command: spec.command,
-            };
-          } catch (error) {
-            return {
-              id: spec.id,
-              name: spec.name,
-              installed: false,
-              command: spec.command,
-              ...(spec.packageName ? { installHint: `npm install -g ${spec.packageName}` } : {}),
-              reason: error instanceof Error ? error.message : String(error),
-            };
-          }
-        }),
-      );
       const statuses = [
         {
           id: "zcode-cli" as const,
@@ -3374,7 +3347,6 @@ export function createZCodeAgentService(
           command: "built-in",
           configPath: registry.path,
         },
-        ...agents,
         ...registry.servers.map((server) => ({
           id: server.id,
           name: server.name,
@@ -5387,6 +5359,8 @@ export function createZCodeAgentService(
         offset: params.offset,
         limit: params.limit,
       });
+      if (await acpV4Bridge.isAcpTask({ ...params, taskId: params.sessionId }))
+        return acpV4Bridge.coordinator.readAttachment({ ...params, ...wireParams });
       const client = await getReadOnlyClient(params);
       return client.request(V4_METHODS.attachmentRead, wireParams, v4AttachmentReadResultSchema);
     },

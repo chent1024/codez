@@ -18,6 +18,7 @@ import {
   AcpRuntimeCoordinator,
   type AcpWorkspaceTarget,
 } from "#src/agent-runtime/acpRuntimeCoordinator.js";
+import { resolveAcpRuntimeSpec } from "#src/agent-runtime/acpRuntimeCatalog.js";
 
 interface AcpV4Subscription {
   target: AcpWorkspaceTarget & { taskId: string };
@@ -117,8 +118,7 @@ export class AcpV4Bridge {
       const payload = commandPayloadSchemas.createSession.parse(envelope.payload);
       if (!payload.runtimeId || payload.runtimeId === "zcode-cli")
         return reject("acpRuntimeNotSelected");
-      if (payload.firstInput?.attachments?.length || payload.mcpServers?.length)
-        return reject("acpCapabilityUnsupported");
+      if (payload.mcpServers?.length) return reject("acpCapabilityUnsupported");
       const meta = await this.coordinator.create({
         ...target,
         commandId: envelope.commandId,
@@ -132,6 +132,7 @@ export class AcpV4Bridge {
           taskId: meta.taskId,
           commandId: envelope.commandId,
           text: payload.firstInput.text,
+          attachments: payload.firstInput.attachments,
         });
       }
       return {
@@ -152,14 +153,60 @@ export class AcpV4Bridge {
     if (!this.coordinator.snapshot(task)) await this.coordinator.load(task);
     if (this.coordinator.isUnavailable(task)) return reject("acpRuntimeUnavailable");
     switch (envelope.type) {
+      case "createSelectionSideSession": {
+        const payload = commandPayloadSchemas.createSelectionSideSession.parse(envelope.payload);
+        const parent = await this.taskIndex.getTaskMeta(task);
+        if (!parent?.runtimeId || parent.runtimeId === "zcode-cli")
+          return reject("acpRuntimeUnavailable");
+        const currentSpec = await resolveAcpRuntimeSpec(parent.runtimeId, { restoreLegacy: true });
+        if (
+          !currentSpec ||
+          (parent.agentServerFingerprint &&
+            currentSpec.fingerprint !== parent.agentServerFingerprint)
+        )
+          return reject("acpRuntimeUnavailable");
+        const selection = payload.firstInput?.modelSelection;
+        if (selection && selection.providerId !== parent.runtimeId)
+          return reject("acpRuntimeNotSelected");
+        const child = await this.coordinator.create({
+          ...target,
+          commandId: envelope.commandId,
+          runtimeId: parent.runtimeId,
+          parentTaskId: parent.taskId,
+          modelId: selection?.modelId ?? parent.model,
+          thoughtLevel: selection?.options?.reasoningLevel ?? parent.thoughtLevel,
+        });
+        if (payload.firstInput) {
+          // 创建命令本身是首条输入的幂等键；重试不会向 Agent 再送一遍文本。
+          await this.coordinator.sendPrompt({
+            ...target,
+            taskId: child.taskId,
+            commandId: envelope.commandId,
+            text: payload.firstInput.text,
+          });
+        }
+        return {
+          commandId: envelope.commandId,
+          status: "accepted",
+          revisionAtDecision: revision,
+          result: {
+            type: "createSelectionSideSession",
+            sessionId: child.taskId,
+            ...(payload.firstInput
+              ? { input: { delivery: "startNow", inputId: envelope.commandId } }
+              : {}),
+          },
+        };
+      }
       case "sendText": {
         const payload = commandPayloadSchemas.sendText.parse(envelope.payload);
-        if (payload.attachments?.length || payload.context_refs?.length || payload.modelExecution)
+        if (payload.context_refs?.length || payload.modelExecution)
           return reject("acpCapabilityUnsupported");
         const outcome = await this.coordinator.sendPrompt({
           ...task,
           commandId: envelope.commandId,
           text: payload.text,
+          attachments: payload.attachments,
         });
         return {
           commandId: envelope.commandId,
@@ -223,6 +270,15 @@ export class AcpV4Bridge {
       };
     }
     if (!(await this.isAcpTask({ ...target, taskId: key.sessionId }))) return null;
+    const child = await this.taskIndex.getTaskMeta({ ...target, taskId: key.commandId });
+    if (child?.forkedFromTaskId === key.sessionId) {
+      return {
+        commandId: key.commandId,
+        status: "accepted",
+        revisionAtDecision: 0,
+        result: { type: "createSelectionSideSession", sessionId: child.taskId },
+      };
+    }
     if (
       !(await this.coordinator.hasAcceptedCommand({
         ...target,

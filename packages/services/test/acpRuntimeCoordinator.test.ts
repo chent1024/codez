@@ -6,8 +6,9 @@ import test from "node:test";
 import { AcpRuntimeCoordinator } from "../src/agent-runtime/acpRuntimeCoordinator.js";
 import { AcpV4Bridge } from "../src/agent-runtime/acpV4Bridge.js";
 import { saveAgentServerConfig } from "../src/agent-runtime/agentServersRegistry.js";
-import { setDataBaseDir } from "../src/paths.js";
+import { getZCodeDataRootDir, setDataBaseDir } from "../src/paths.js";
 import { TaskIndexRepo } from "../src/session/taskIndexRepo.js";
+import { AcpTranscriptStore } from "../src/agent-runtime/acpTranscriptStore.js";
 
 const AGENT = `
 import { createInterface } from 'node:readline';
@@ -23,8 +24,8 @@ const configOptions = () => [
 for await (const line of input) {
   const request = JSON.parse(line);
   const answer = (result) => process.stdout.write(JSON.stringify({jsonrpc:'2.0', id:request.id, result})+'\\n');
-  if (request.method === 'initialize') answer({protocolVersion:request.params.protocolVersion,agentCapabilities:{loadSession:true}});
-  if (request.method === 'session/new') answer({sessionId:'native-session',configOptions:configOptions()});
+  if (request.method === 'initialize') answer({protocolVersion:request.params.protocolVersion,agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}});
+  if (request.method === 'session/new') answer({sessionId:'native-session-'+process.pid,configOptions:configOptions()});
   if (request.method === 'session/load') answer({configOptions:configOptions()});
   if (request.method === 'session/set_config_option') {
     if (request.params.configId === 'model') model = request.params.value;
@@ -32,8 +33,11 @@ for await (const line of input) {
     answer({configOptions:configOptions()});
   }
   if (request.method === 'session/prompt') {
+    const blocks = request.params.prompt;
+    const reply = blocks.some((block) => block.type === 'image') ? 'image-received'
+      : blocks.some((block) => block.type === 'resource' && block.resource.text === 'local note') ? 'file-received' : 'reply';
     process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{
-      sessionId:request.params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'reply'}}
+      sessionId:request.params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:reply}}
     }})+'\\n');
     answer({stopReason:'end_turn'});
   }
@@ -58,10 +62,16 @@ test("ACP coordinator binds workbench identity, deduplicates and restores V4 his
   const target = { workspacePath: dir, workspaceIdentity: "remote-a", taskId: "create-1" };
   try {
     await writeFile(agentFile, AGENT);
+    await saveAgentServerConfig({
+      id: "coordinator-agent",
+      name: "Coordinator Agent",
+      command: process.execPath,
+      args: [agentFile],
+    });
     const config = { modelId: "acp:model:model:ultimate", thoughtLevel: "high" };
     const preview = await coordinator.discoverConfig({
       ...target,
-      runtimeId: "cline-acp",
+      runtimeId: "coordinator-agent",
       modelId: config.modelId,
     });
     assert.equal(preview.selectedModel, config.modelId);
@@ -73,19 +83,19 @@ test("ACP coordinator binds workbench identity, deduplicates and restores V4 his
       coordinator.create({
         ...target,
         commandId: target.taskId,
-        runtimeId: "cline-acp",
+        runtimeId: "coordinator-agent",
         ...config,
       }),
       coordinator.create({
         ...target,
         commandId: target.taskId,
-        runtimeId: "cline-acp",
+        runtimeId: "coordinator-agent",
         ...config,
       }),
     ]);
-    assert.equal(first.nativeSessionId, "native-session");
+    assert.match(first.nativeSessionId ?? "", /^native-session-\d+$/);
     assert.deepEqual(duplicate, first);
-    assert.equal((await repo.getTaskMeta(target))?.runtimeId, "cline-acp");
+    assert.equal((await repo.getTaskMeta(target))?.runtimeId, "coordinator-agent");
     assert.equal(first.model, config.modelId);
     assert.equal(first.thoughtLevel, config.thoughtLevel);
     assert.equal(
@@ -143,6 +153,164 @@ test("ACP coordinator binds workbench identity, deduplicates and restores V4 his
   }
 });
 
+test("ACP sends local images and files using declared prompt capabilities", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codez-acp-attachments-"));
+  setDataBaseDir(dir);
+  const repo = new TaskIndexRepo(join(dir, "tasks.sqlite"));
+  const agentFile = join(dir, "agent.mjs");
+  const imageFile = join(dir, "sample.png");
+  const textFile = join(dir, "notes.txt");
+  const target = { workspacePath: dir, taskId: "attachment-task" };
+  const coordinator = new AcpRuntimeCoordinator(repo);
+  try {
+    await writeFile(agentFile, AGENT);
+    await writeFile(imageFile, Buffer.from("89504e470d0a1a0a", "hex"));
+    await writeFile(textFile, "local note");
+    await saveAgentServerConfig({
+      id: "attachment-agent",
+      name: "Attachment Agent",
+      command: process.execPath,
+      args: [agentFile],
+    });
+    await coordinator.create({
+      ...target,
+      commandId: target.taskId,
+      runtimeId: "attachment-agent",
+    });
+    await coordinator.sendPrompt({
+      ...target,
+      commandId: "image-command",
+      text: "What is this?",
+      attachments: [{ ref: imageFile, fileName: "sample.png", mime: "image/png", bytes: 8 }],
+    });
+    await waitForAcpCompletion(coordinator, target);
+    assert.ok(
+      coordinator
+        .snapshot(target)
+        ?.rows.window.some((row) => row.kind === "assistantText" && row.text === "image-received"),
+    );
+    await coordinator.sendPrompt({
+      ...target,
+      commandId: "file-command",
+      text: "Read this",
+      attachments: [{ ref: textFile, fileName: "notes.txt", mime: "text/plain", bytes: 10 }],
+    });
+    await waitForAcpCompletion(coordinator, target);
+    assert.ok(
+      coordinator
+        .snapshot(target)
+        ?.rows.window.some((row) => row.kind === "assistantText" && row.text === "file-received"),
+    );
+    const transcript = new AcpTranscriptStore(dir, target.taskId, getZCodeDataRootDir());
+    const entries = (await transcript.read()) ?? [];
+    assert.ok(
+      entries.some(
+        (entry) =>
+          entry.kind === "prompt" && entry.content.some((block) => block.type === "resource_link"),
+      ),
+    );
+    assert.ok(
+      entries.some(
+        (entry) =>
+          entry.kind === "prompt" &&
+          entry.content.some(
+            (block) => block.type === "resource_link" && block.uri.endsWith("sample.png"),
+          ),
+      ),
+    );
+    assert.ok(
+      entries.every(
+        (entry) =>
+          entry.kind !== "prompt" || entry.content.every((block) => block.type !== "image"),
+      ),
+    );
+    const imagePreview = await coordinator.readAttachment({
+      ...target,
+      sessionId: target.taskId,
+      ref: imageFile,
+      offset: 0,
+      limit: 20,
+    });
+    assert.equal(
+      imagePreview.dataBase64,
+      Buffer.from("89504e470d0a1a0a", "hex").toString("base64"),
+    );
+    await assert.rejects(
+      coordinator.readAttachment({
+        ...target,
+        sessionId: target.taskId,
+        ref: agentFile,
+        offset: 0,
+        limit: 20,
+      }),
+      /previewRefNotAuthorized/,
+    );
+    await assert.rejects(
+      coordinator.sendPrompt({
+        ...target,
+        commandId: "bad-command",
+        text: "bad",
+        attachments: [{ ref: "opaque-upload-ref", fileName: "x.png", mime: "image/png", bytes: 1 }],
+      }),
+      /local absolute path/,
+    );
+    const noImageAgent = join(dir, "no-image-agent.mjs");
+    await writeFile(
+      noImageAgent,
+      AGENT.replace("promptCapabilities:{image:true}", "promptCapabilities:{image:false}"),
+    );
+    await saveAgentServerConfig({
+      id: "no-image-agent",
+      name: "No Image Agent",
+      command: process.execPath,
+      args: [noImageAgent],
+    });
+    const noImageTarget = { workspacePath: dir, taskId: "no-image-task" };
+    await coordinator.create({
+      ...noImageTarget,
+      commandId: noImageTarget.taskId,
+      runtimeId: "no-image-agent",
+    });
+    await assert.rejects(
+      coordinator.sendPrompt({
+        ...noImageTarget,
+        commandId: "rejected-image",
+        text: "describe",
+        attachments: [{ ref: imageFile, fileName: "sample.png", mime: "image/png", bytes: 8 }],
+      }),
+      /does not support image prompts/,
+    );
+    assert.equal(
+      (await new AcpTranscriptStore(dir, noImageTarget.taskId, getZCodeDataRootDir()).read())
+        ?.length ?? 0,
+      0,
+    );
+  } finally {
+    await coordinator.closeAll();
+    repo.close();
+    setDataBaseDir(null);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+async function waitForAcpCompletion(
+  coordinator: AcpRuntimeCoordinator,
+  target: { workspacePath: string; taskId: string },
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("ACP turn did not complete")), 3000);
+    const poll = () => {
+      if (coordinator.snapshot(target)?.control.phase === "completedSuccess") {
+        clearTimeout(timeout);
+        resolve();
+        return;
+      }
+      setTimeout(poll, 10);
+    };
+    poll();
+  });
+}
+
 test("a configured ACP Agent absent from the built-in catalog can create and restore", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codez-acp-custom-"));
   setDataBaseDir(dir);
@@ -191,6 +359,85 @@ test("a configured ACP Agent absent from the built-in catalog can create and res
     }
   } finally {
     await coordinator.closeAll();
+    repo.close();
+    setDataBaseDir(null);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ACP auxiliary conversation creates an isolated child and restores its binding", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codez-acp-side-chat-"));
+  setDataBaseDir(dir);
+  const repo = new TaskIndexRepo(join(dir, "tasks.sqlite"));
+  const agentFile = join(dir, "agent.mjs");
+  const target = { workspacePath: dir };
+  let bridge = new AcpV4Bridge(
+    repo,
+    () => {},
+    () => false,
+  );
+  try {
+    await writeFile(agentFile, AGENT);
+    await saveAgentServerConfig({
+      id: "side-chat-agent",
+      name: "Side Chat Agent",
+      command: process.execPath,
+      args: [agentFile],
+    });
+    const parent = await bridge.coordinator.create({
+      ...target,
+      commandId: "parent-task",
+      runtimeId: "side-chat-agent",
+      modelId: "acp:model:model:ultimate",
+      thoughtLevel: "high",
+    });
+    const envelope = {
+      commandId: "child-task",
+      clientId: "test-client",
+      sessionId: parent.taskId,
+      type: "createSelectionSideSession" as const,
+      payload: { firstInput: { text: "child only" } },
+      issuedAt: Date.now(),
+    };
+    const created = await bridge.command(target, envelope);
+    assert.equal(created.status, "accepted");
+    assert.deepEqual(created.result, {
+      type: "createSelectionSideSession",
+      sessionId: "child-task",
+      input: { delivery: "startNow", inputId: "child-task" },
+    });
+    const child = await repo.getTaskMeta({ ...target, taskId: "child-task" });
+    assert.equal(child?.forkedFromTaskId, parent.taskId);
+    assert.equal(child?.runtimeId, parent.runtimeId);
+    assert.equal(child?.model, parent.model);
+    assert.equal(child?.thoughtLevel, parent.thoughtLevel);
+    assert.equal(
+      (await bridge.command(target, envelope)).result?.type,
+      "createSelectionSideSession",
+    );
+    assert.equal(
+      (await bridge.queryCommand(target, { sessionId: parent.taskId, commandId: "child-task" }))
+        ?.result?.type,
+      "createSelectionSideSession",
+    );
+    assert.equal(
+      (await bridge.coordinator.load({ ...target, taskId: parent.taskId })).rows.totalCount,
+      0,
+    );
+    await waitForAcpCompletion(bridge.coordinator, { ...target, taskId: "child-task" });
+    await bridge.dispose();
+    bridge = new AcpV4Bridge(
+      repo,
+      () => {},
+      () => false,
+    );
+    const restored = await bridge.coordinator.load({ ...target, taskId: "child-task" });
+    assert.equal(restored.config.provider, "side-chat-agent");
+    assert.ok(
+      restored.rows.window.some((row) => row.kind === "userInput" && row.text === "child only"),
+    );
+  } finally {
+    await bridge.dispose();
     repo.close();
     setDataBaseDir(null);
     await rm(dir, { recursive: true, force: true });
