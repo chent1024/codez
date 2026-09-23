@@ -1,4 +1,8 @@
-import type { BackgroundBashOutputResult, SessionDebugSnapshot } from "@zcode/shared";
+import type {
+  AgentRuntimeId,
+  BackgroundBashOutputResult,
+  SessionDebugSnapshot,
+} from "@zcode/shared";
 /* eslint-disable max-lines -- ZCode agent service 接口集中声明 protocol/session/workspace 方法，拆分会增加 service descriptor 迁移成本。 */
 import type { Event, IDisposable } from "@zcode/rpc";
 import { ServiceChannels } from "@zcode/shared";
@@ -563,7 +567,62 @@ export interface ZCodeAgentStorageStartupSnapshot {
   state: ZCodeStorageStartupState | null;
 }
 
+export interface AgentRuntimeInstallStatus {
+  id: AgentRuntimeId;
+  name: string;
+  installed: boolean;
+  command: string;
+  installHint?: string;
+  reason?: string;
+  configPath?: string;
+  models?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    thoughtLevels?: Array<{ value: string; name: string }>;
+  }>;
+  availableModels?: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    thoughtLevels?: Array<{ value: string; name: string }>;
+  }>;
+}
+
+export interface AgentRuntimeConfigPreview {
+  models: Array<{
+    id: string;
+    name: string;
+    description?: string;
+    thoughtLevels?: Array<{ value: string; name: string }>;
+  }>;
+  selectedModel: string;
+  thoughtLevels: Array<{ value: string; name: string }>;
+  selectedThought: string;
+}
+
 export interface IZCodeAgentService {
+  /** 仅探测安装入口；认证状态必须以各 ACP Agent 自己的握手与会话建立为准。 */
+  listAgentRuntimes(): Promise<AgentRuntimeInstallStatus[]>;
+  saveAgentServer(input: {
+    id: string;
+    name: string;
+    command: string;
+    args: string[];
+  }): Promise<AgentRuntimeInstallStatus[]>;
+  saveAgentServerModels(
+    input: ZCodeAgentWorkspaceTarget & {
+      runtimeId: AgentRuntimeId;
+      modelIds: string[];
+    },
+  ): Promise<AgentRuntimeInstallStatus[]>;
+  discoverAgentRuntimeConfig(
+    params: ZCodeAgentWorkspaceTarget & {
+      runtimeId: AgentRuntimeId;
+      modelId?: string;
+      includeAllModelThoughtLevels?: boolean;
+    },
+  ): Promise<AgentRuntimeConfigPreview>;
   /** 控制面不需要账号或模型，且不发送普通协议请求。 */
   prepareStorage(params: ZCodeAgentWorkspaceTarget): Promise<void>;
   getStorageStartupState(

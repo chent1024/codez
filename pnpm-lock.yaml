@@ -950,6 +950,9 @@ importers:
 
   packages/services:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: 1.4.0
+        version: 1.4.0(zod@4.6.5)
       '@zcode/provider':
         specifier: workspace:*
         version: link:../provider
@@ -971,6 +974,9 @@ importers:
       ignore:
         specifier: ^5.3.2
         version: 5.3.2
+      marked:
+        specifier: 16.4.2
+        version: 16.4.2
       node-forge:
         specifier: ^1.4.0
         version: 1.4.0
@@ -1337,6 +1343,11 @@ packages:
 
   7zip-bin@5.2.0:
     resolution: {integrity: sha512-ukTPVhqG4jNzMro2qA9HSCSSVJN3aN7tlb+hfqYCt3ER0yWroeA2VR38MNrOHLQ/cVj+DaIMad0kFCtWWowh/A==}
+
+  '@agentclientprotocol/sdk@1.4.0':
+    resolution: {integrity: sha512-/eufudw+aFY1LKLolT6yFE6UMmYRl7fMJ/DEONSIyR6wI3slHWITBsANRGqXEY8FRzqUxwh7QEaGiZHcJPVThg==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   '@ai-sdk/anthropic@3.0.81':
     resolution: {integrity: sha512-B1JDd9Ugq9R5AgIaW3674lhGCMMYJcPUxnrZh8fzbGojgg4QvHFRv6eZahGQAUsmGHbcf74G9bdSBDLWQGY2GA==}
@@ -9940,6 +9951,10 @@ packages:
 snapshots:
 
   7zip-bin@5.2.0: {}
+
+  '@agentclientprotocol/sdk@1.4.0(zod@4.6.5)':
+    dependencies:
+      zod: 4.6.5
 
   '@ai-sdk/anthropic@3.0.81(patch_hash=d3a7c381eba7f5157f765a0528003af17cf84544911dfb7412c7800168e01c18)(zod@4.6.5)':
     dependencies:

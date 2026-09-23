@@ -11,6 +11,8 @@ export const sessionConfigStateSchema = z.object({
   // 思考档位是当前模型的能力，不是 workspace/UI 偏好。
   // default 仅用于兼容旧快照；新 agent 必须从 runtime 投影实际集合。
   thoughtLevels: z.array(z.string()).default([]),
+  /** ACP Agent 当次会话实际公布的模型选项；旧 ZCode 快照缺省为空。 */
+  acpModelOptions: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
   followupMode: z.enum(["queue", "guide"]),
   // additive（冻结面演进，同 meta 的裁决口径）：agent 协作模式（core CollaborationMode）。
   // 必须带 default 才不破坏旧快照/旧发送端的解析；投影经 SessionModeChanged 事件更新。

@@ -10,11 +10,13 @@ import { dirname } from "node:path";
 import {
   isRemoteWorkspaceIdentity,
   ZCODE_AGENT_PROVIDER,
+  ZCODE_CLI_RUNTIME_ID,
   zcodeTaskMetaSchema,
   resolveWorkspaceKey,
   CRON_DEFAULT_GROUP_ID,
   OFF_PEAK_DEFAULT_GROUP_ID,
   type ZCodeProvider,
+  type AgentRuntimeId,
   type ZCodeTaskMeta,
 } from "@zcode/shared";
 import type {
@@ -47,9 +49,15 @@ function appendZCodeAgentIndexedProviderFilter(
   args: Array<string | number>,
   provider: ZCodeProvider,
 ): void {
-  // 列表按当前 runtime provider 过滤；历史导入来源不改变此边界。
-  where.push("provider = ?");
-  args.push(provider);
+  // 原因：ACP 会话没有 CLI provider 列，但仍属于同一工作台列表；只纳入有
+  // 原生 session 绑定的 ACP 行，避免旧第三方 CLI 导入行重新出现在侧栏。
+  if (provider === ZCODE_AGENT_PROVIDER) {
+    where.push("(provider = ? OR (runtime_id <> ? AND native_session_id IS NOT NULL))");
+    args.push(provider, ZCODE_CLI_RUNTIME_ID);
+  } else {
+    where.push("provider = ?");
+    args.push(provider);
+  }
 }
 type DatabaseSyncInstance = InstanceType<typeof DatabaseSync>;
 
@@ -58,6 +66,8 @@ interface TaskIndexRow {
   workspace_path: string;
   workspace_identity: string | null;
   task_id: string;
+  runtime_id: AgentRuntimeId;
+  native_session_id: string | null;
   title: string;
   task_status: string | null;
   provider: string | null;
@@ -213,6 +223,8 @@ function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
         // 可能缺失或属于旧远端。读取时必须与行主键投影一致，sessions-index 才能
         // 按 workspaceKey + taskId 附加 running activity。
         taskId: row.task_id,
+        runtimeId: row.runtime_id,
+        nativeSessionId: row.native_session_id ?? undefined,
         workspacePath: row.workspace_path,
         workspaceIdentity,
         // unread 是 tasks-index 产品壳状态；标量列必须覆盖可能来自其他 Host 的旧 meta_json。
@@ -236,6 +248,8 @@ function rowToMeta(row: TaskIndexRow): ZCodeTaskMeta {
 
   return {
     taskId: row.task_id,
+    runtimeId: row.runtime_id,
+    nativeSessionId: row.native_session_id ?? undefined,
     traceId: `zcode-${row.task_id}`,
     title: row.title,
     titleOverridden: row.title_overridden === 1,
@@ -690,6 +704,8 @@ export class TaskIndexRepo {
           workspace_path,
           workspace_identity,
           task_id,
+          runtime_id,
+          native_session_id,
           title,
           task_status,
           provider,
@@ -898,6 +914,8 @@ export class TaskIndexRepo {
           workspace_path,
           workspace_identity,
           task_id,
+          runtime_id,
+          native_session_id,
           title,
           task_status,
           provider,
@@ -1141,14 +1159,27 @@ export class TaskIndexRepo {
   private writeRecord(record: TaskIndexWriteRecord): ZCodeTaskMeta {
     // searchable_text 传 undefined 表示"不动现有值"。读一次 row 拿到当前值，
     // 否则 ON CONFLICT 时 excluded.searchable_text 会被赋成空字符串，把已索引正文清空。
-    const existing =
-      record.searchableText === undefined
-        ? this.getTaskRow({
-            workspacePath: record.meta.workspacePath,
-            workspaceIdentity: record.meta.workspaceIdentity,
-            taskId: record.meta.taskId,
-          })
-        : null;
+    const existing = this.getTaskRow({
+      workspacePath: record.meta.workspacePath,
+      workspaceIdentity: record.meta.workspaceIdentity,
+      taskId: record.meta.taskId,
+    });
+    const runtimeId = record.meta.runtimeId ?? ZCODE_CLI_RUNTIME_ID;
+    const nativeSessionId = record.meta.nativeSessionId ?? null;
+    if (runtimeId !== ZCODE_CLI_RUNTIME_ID && !nativeSessionId)
+      throw new Error("ACP task requires a native session ID");
+    if (runtimeId === ZCODE_CLI_RUNTIME_ID && nativeSessionId)
+      throw new Error("ZCode CLI task cannot carry an ACP native session ID");
+    if (
+      existing &&
+      (existing.runtime_id !== runtimeId || existing.native_session_id !== nativeSessionId)
+    )
+      throw new Error("Task runtime binding is immutable");
+    if (
+      existing &&
+      rowToMeta(existing).agentServerFingerprint !== record.meta.agentServerFingerprint
+    )
+      throw new Error("Task ACP Agent identity is immutable");
     const searchableText =
       record.searchableText !== undefined
         ? record.searchableText.slice(0, TASK_SEARCH_TEXT_MAX_CHARS)
@@ -1160,6 +1191,8 @@ export class TaskIndexRepo {
           workspace_path,
           workspace_identity,
           task_id,
+          runtime_id,
+          native_session_id,
           title,
           task_status,
           provider,
@@ -1184,6 +1217,8 @@ export class TaskIndexRepo {
           @workspace_path,
           @workspace_identity,
           @task_id,
+          @runtime_id,
+          @native_session_id,
           @title,
           @task_status,
           @provider,
@@ -1207,6 +1242,8 @@ export class TaskIndexRepo {
         ON CONFLICT(workspace_key, task_id) DO UPDATE SET
           workspace_path = excluded.workspace_path,
           workspace_identity = excluded.workspace_identity,
+          runtime_id = excluded.runtime_id,
+          native_session_id = excluded.native_session_id,
           title = excluded.title,
           task_status = excluded.task_status,
           provider = excluded.provider,
@@ -1239,6 +1276,8 @@ export class TaskIndexRepo {
         workspace_path: record.meta.workspacePath,
         workspace_identity: record.meta.workspaceIdentity ?? null,
         task_id: record.meta.taskId,
+        runtime_id: runtimeId,
+        native_session_id: nativeSessionId,
         title: record.meta.title,
         task_status: record.meta.status ?? null,
         provider: record.meta.provider ?? null,
@@ -1689,6 +1728,8 @@ export class TaskIndexRepo {
           workspace_path,
           workspace_identity,
           task_id,
+          runtime_id,
+          native_session_id,
           title,
           task_status,
           provider,
@@ -1711,7 +1752,8 @@ export class TaskIndexRepo {
         WHERE (@workspace_key IS NULL OR workspace_key = @workspace_key)
           AND (@include_deleted = 1 OR deleted = 0)
           -- 按请求指定的 runtime provider 过滤；迁移来源另存于 migration_source。
-          AND (@provider IS NULL OR provider = @provider)
+          AND (@provider IS NULL OR provider = @provider
+            OR (@include_acp = 1 AND runtime_id <> @cli_runtime_id AND native_session_id IS NOT NULL))
           AND (@pinned IS NULL OR pinned = @pinned)
           AND (@archived IS NULL OR archived = @archived)
         ORDER BY updated_at DESC, created_at DESC, task_id DESC`,
@@ -1720,6 +1762,8 @@ export class TaskIndexRepo {
         workspace_key: targetWorkspaceKey,
         include_deleted: params.includeDeleted ? 1 : 0,
         provider: params.provider ?? null,
+        include_acp: params.provider === ZCODE_AGENT_PROVIDER ? 1 : 0,
+        cli_runtime_id: ZCODE_CLI_RUNTIME_ID,
         pinned: typeof params.pinned === "boolean" ? (params.pinned ? 1 : 0) : null,
         archived: typeof params.archived === "boolean" ? (params.archived ? 1 : 0) : null,
       }) as unknown as TaskIndexRow[];
@@ -1748,12 +1792,15 @@ export class TaskIndexRepo {
         FROM tasks
         WHERE workspace_key = @workspace_key
           AND deleted = 1
-          AND (@provider IS NULL OR provider = @provider)
+          AND (@provider IS NULL OR provider = @provider
+            OR (@include_acp = 1 AND runtime_id <> @cli_runtime_id AND native_session_id IS NOT NULL))
         ORDER BY task_id`,
       )
       .all({
         workspace_key: workspaceKeyValue,
         provider: params.provider ?? null,
+        include_acp: params.provider === ZCODE_AGENT_PROVIDER ? 1 : 0,
+        cli_runtime_id: ZCODE_CLI_RUNTIME_ID,
       }) as Array<{ task_id: string }>;
     return rows.map((row) => row.task_id);
   }
@@ -1771,6 +1818,8 @@ export class TaskIndexRepo {
           workspace_path,
           workspace_identity,
           task_id,
+          runtime_id,
+          native_session_id,
           title,
           task_status,
           provider,
@@ -1853,6 +1902,8 @@ export class TaskIndexRepo {
           workspace_path,
           workspace_identity,
           task_id,
+          runtime_id,
+          native_session_id,
           title,
           task_status,
           provider,
@@ -2103,6 +2154,8 @@ export class TaskIndexRepo {
                 workspace_path,
                 workspace_identity,
                 task_id,
+                runtime_id,
+                native_session_id,
                 title,
                 task_status,
                 provider,

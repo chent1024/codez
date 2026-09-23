@@ -13,6 +13,7 @@ import {
   type UsageEntitlementSnapshot,
 } from "@zcode/shared";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
+import type { AgentRuntimeInstallStatus } from "@zcode/services";
 import { getProviderFormLabel } from "@/lib/providerSettingsFormTypes.js";
 
 export function generateId(): string {
@@ -135,6 +136,12 @@ export function resolveModelProviderDisplayName(
 export type ModelProviderNavItem =
   | {
       key: string;
+      type: "acp";
+      label: string;
+      status: AgentRuntimeInstallStatus;
+    }
+  | {
+      key: string;
       type: "preset";
       /** 品牌入口图标独立于其历史 Start 导航身份。 */
       logo?: ProviderSettingsFormProvider["config"]["logo"];
@@ -220,7 +227,7 @@ export type ModelProviderNavItem =
       statusActive: boolean;
     };
 
-export type ModelProviderNavGroupId = "preset" | "custom";
+export type ModelProviderNavGroupId = "preset" | "custom" | "acp";
 
 export interface ModelProviderNavGroup {
   id: ModelProviderNavGroupId;

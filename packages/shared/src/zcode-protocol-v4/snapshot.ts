@@ -2,6 +2,7 @@
 // ConversationSnapshot A 区。
 // A 区更新语义 = 字段级整体替换（state.updated），绝不深合并——深合并是错乱之母。
 import { z } from "zod";
+import { agentRuntimeIdSchema } from "../agent-runtime.js";
 import { sharedContextImportStateSchema } from "./shared-context-import.js";
 export { sharedContextImportStateSchema } from "./shared-context-import.js";
 import { conversationInputDispatchSchema, conversationInputIntentSchema } from "./input-intent.js";
@@ -172,6 +173,7 @@ export type InputRouting = z.infer<typeof inputRoutingSchema>;
 // ── meta（会话级元信息：标题）。renameSession/自动标题落此。──
 export const sessionMetaStateSchema = z.object({
   title: z.string(),
+  runtimeId: agentRuntimeIdSchema.optional(),
   // default = 未命名；generated = 模型自动生成；custom = 用户显式重命名（不再被自动标题覆盖）。
   titleSource: z.enum(["default", "generated", "custom"]),
 });

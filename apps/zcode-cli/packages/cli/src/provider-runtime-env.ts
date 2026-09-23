@@ -58,6 +58,9 @@ export async function prepareCliProviderRuntimeEnv(
   const explicitZCodeBuiltin = options.env[ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV]?.trim();
   const explicitPersonal = options.env[ZCODE_PERSONAL_PROVIDER_CONFIG_FILE_ENV]?.trim();
   const dataBaseDir = options.dataBaseDir ?? options.env.ZCODE_DATA_BASE_DIR?.trim() ?? homedir();
+  const environmentConfigRoot = options.env.ZCODE_STORAGE_DIR?.trim()
+    ? join(options.env.ZCODE_STORAGE_DIR.trim(), "v2")
+    : join(dataBaseDir, ".zcode", "v2");
   if (explicitZCodeBuiltin && explicitPersonal) {
     return {
       [ZCODE_BUILTIN_PROVIDER_CONFIG_FILE_ENV]: explicitZCodeBuiltin,
@@ -68,17 +71,17 @@ export async function prepareCliProviderRuntimeEnv(
   const zcodeBuiltinFilePath =
     explicitZCodeBuiltin ??
     (await resolveBundledZCodeBuiltinProviderConfig({
-      dataBaseDir,
+      environmentConfigRoot,
       entrypoint: options.entrypoint ?? process.argv[1],
       sea: options.sea ?? getSeaProviderConfigAssets(),
     }));
   const personalFilePath =
-    explicitPersonal ?? join(dataBaseDir, ".zcode", "v2", PERSONAL_PROVIDER_CONFIG_FILE_NAME);
+    explicitPersonal ?? join(environmentConfigRoot, PERSONAL_PROVIDER_CONFIG_FILE_NAME);
   const appVersion = options.appVersion ?? ZCODE_VERSION;
   const platform = options.platform ?? resolveZCodeBuiltinClientPlatform();
   const zcodeEndpointOrigin = resolveRuntimeZCodeEndpointOrigin(options.env);
   const cachePaths = resolveZCodeBuiltinCachePaths({
-    environmentConfigRoot: join(dataBaseDir, ".zcode", "v2"),
+    environmentConfigRoot,
     platform,
     appVersion,
     zcodeEndpointOrigin,
@@ -130,14 +133,14 @@ function requiresProviderRuntime(argv: readonly string[]): boolean {
 }
 
 async function resolveBundledZCodeBuiltinProviderConfig(input: {
-  readonly dataBaseDir: string;
+  readonly environmentConfigRoot: string;
   readonly entrypoint: string | undefined;
   readonly sea: SeaProviderConfigAssets | undefined;
 }): Promise<string> {
   if (input.sea?.isSea()) {
     const content = input.sea.getAsset(SEA_ZCODE_BUILTIN_PROVIDER_CONFIG_ASSET_KEY, "utf8");
     return materializeZCodeBuiltinProviderConfig({
-      environmentConfigRoot: join(input.dataBaseDir, ".zcode", "v2"),
+      environmentConfigRoot: input.environmentConfigRoot,
       content,
     });
   }

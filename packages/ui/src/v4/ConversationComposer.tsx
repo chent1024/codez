@@ -1,5 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- composer 集中收口输入区 wiring（附件/草稿/历史/mention），拆分会打散收口粒度。 */
 import { getLocalTtftObserver } from "@/v4/telemetry/localTtftObserver.js";
+import type { AgentRuntimeId } from "@zcode/shared";
 /**
  * v4 会话 composer（composer parity）。
  *
@@ -370,6 +371,7 @@ interface ConversationComposerProps {
   replaceComposerDraft: (draft: Omit<V4ComposerDraft, "updatedAt">) => void;
   /** 当前 Composer 是否能构造完整 Submission；空模型或空 Reasoning 时为 false。 */
   submissionReady?: boolean;
+  agentRuntimeId?: AgentRuntimeId;
   createSubmissionFromComposer?: () => ComposerSubmissionConfig | null;
   /** 仅供发送埋点冻结模型维度；包含草稿初始化 config 与显式 intent 的合并值。 */
   telemetryDraftConfig?: Partial<SessionConfigState>;
@@ -491,6 +493,7 @@ function ConversationComposerImpl({
   updateComposerContent,
   replaceComposerDraft,
   submissionReady = true,
+  agentRuntimeId = "zcode-cli",
   createSubmissionFromComposer,
   telemetryDraftConfig,
   contextHeader,
@@ -1176,7 +1179,9 @@ function ConversationComposerImpl({
           !submittedShareContext) ||
         pendingRef.current ||
         !submissionReady ||
-        (createSubmissionFromComposer !== undefined && submission === null) ||
+        (agentRuntimeId === "zcode-cli" &&
+          createSubmissionFromComposer !== undefined &&
+          submission === null) ||
         attachmentsApi.hasUnreadyAttachments
       ) {
         return;
@@ -1443,6 +1448,7 @@ function ConversationComposerImpl({
       conversationTelemetry,
       draftConfig,
       createSubmissionFromComposer,
+      agentRuntimeId,
       submissionReady,
       getCodeCommentContexts,
       telemetryDraftConfig,
@@ -2101,6 +2107,7 @@ function ConversationComposerImpl({
     [
       canSend,
       activeConfigPicker,
+      agentRuntimeId,
       composerPhase,
       composerUsage,
       disabled,
@@ -2267,10 +2274,10 @@ function ConversationComposerImpl({
           enterSubmits={enterSubmits}
           onModifiedSubmit={modifiedEnterSubmits ? handleModifiedEditorSubmit : undefined}
           submitLabel={sendTooltipTitle}
-          showSlashButton
+          showSlashButton={agentRuntimeId === "zcode-cli"}
           // @ 是 Plugin / 文件 / 对话 / 画板主入口；# 会话与 $ / ¥ / ￥ Skills
           // 仍由 MentionPlugin 保留兼容触发，但不在 + 菜单重复展示。
-          showMentionButton
+          showMentionButton={agentRuntimeId === "zcode-cli"}
           topContent={topContentNode}
           attachmentAction={attachmentAction}
           inputTestId={TID_V4_COMPOSER_INPUT}
@@ -2280,8 +2287,8 @@ function ConversationComposerImpl({
           // secondary pane 按产品能力隐藏 goal，不再追加任何内建命令或别名。
           excludedSlashCommandNames={suppressGoalCommands ? ["goal"] : undefined}
           appSlashCommands={appSlashCommands}
-          enableMentionPanel
-          leadingActions={leadingActionsNode}
+          enableMentionPanel={agentRuntimeId === "zcode-cli"}
+          leadingActions={agentRuntimeId === "zcode-cli" ? leadingActionsNode : undefined}
           submitControl={submitControlNode}
           className="p-0"
           onChange={handleEditorChange}

@@ -9,6 +9,20 @@ export function resolveModelThoughtOption(params: {
   currentValue?: string;
   formatLevelName?: (level: string) => string;
 }): ZCodeConfigOption | null {
+  const acpModel = params.modelSelectionView.acpProviders
+    ?.find((candidate) => candidate.providerId === params.providerId)
+    ?.models.find((candidate) => candidate.modelId === params.modelId);
+  if (acpModel) {
+    if (!acpModel.reasoningLevels.length) return null;
+    return {
+      id: "thought_level",
+      name: "Thought Level",
+      category: "thought_level",
+      type: "select",
+      currentValue: params.currentValue ?? "",
+      options: acpModel.reasoningLevels.map((level) => ({ value: level.value, name: level.name })),
+    };
+  }
   const provider = params.modelSelectionView.providers.find(
     (candidate) => candidate.providerId === params.providerId,
   );

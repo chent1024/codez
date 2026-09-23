@@ -1,0 +1,111 @@
+# agent-runtime-selection Specification
+
+## Purpose
+让用户通过现有模型供应商和模型选择流程使用 API 或 ACP，同时保证每条会话在创建、恢复和跨设备访问时由原执行适配器拥有。
+## Requirements
+### Requirement: ACP as a model provider form
+
+CodeZ SHALL 在现有模型供应商列表提供 ACP 供应商，列出受支持 ACP CLI 的安装、认证及可用状态。用户 SHALL 在现有输入框模型选择器中选择 ACP 供应商公布的模型与思考等级；输入框和设置页 SHALL NOT 增加独立的 Runtime 选择器或配置区域。
+
+ACP 供应商的创建、恢复和执行 SHALL 不以 ZCode 订阅状态、ZCode CLI 进程或 API 供应商配置为前提。用户可以只配置并使用 ACP 供应商；各 Agent 使用自身支持的 API 凭据或登录方式。CodeZ 不把一份通用 API 凭据自动注入不支持它的 ACP Agent。
+
+#### Scenario: Multiple provider forms coexist
+
+- **WHEN** 一个 API 供应商与一个 ACP 供应商均可用，用户通过同一个模型选择器依次创建两条会话
+- **THEN** 两条会话可分别由不同执行适配器运行，列表和会话页显示所选供应商与模型
+
+#### Scenario: Runtime unavailable
+
+- **WHEN** 用户选择的 ACP 供应商对应 CLI 未安装、未认证或握手失败
+- **THEN** 创建操作显示具体状态，既不发送给 ZCode CLI，也不生成假成功会话
+
+### Requirement: Immutable session ownership
+
+CodeZ SHALL 在新会话接纳首条输入之前持久化所选 providerId/modelId、执行适配器身份、工作区身份和原生会话 ID 映射；后续命令、事件、恢复和删除 SHALL 使用同一归属。旧任务缺失执行适配器身份时 SHALL 视为现有 ZCode CLI 任务。
+
+#### Scenario: ACP task remains in the shared task list after restart
+
+- **WHEN** CodeZ 重启并读取包含 ZCode CLI 与 ACP 会话的同一工作区任务索引
+- **THEN** 两类会话都出现在现有侧栏、分组、置顶和归档视图中，ACP 会话仍由保存的 Runtime ID 恢复
+- **AND** 历史第三方 CLI 导入行不会因这个读取规则重新混入当前任务列表
+
+#### Scenario: Selection changes after session creation
+
+- **WHEN** 用户改变草稿模型选择后打开既有会话
+- **THEN** 会话仍由创建时的执行适配器接收输入
+
+#### Scenario: Workspace isolation
+
+- **WHEN** 两个远程工作区路径相同但 workspaceIdentity 不同
+- **THEN** Runtime 绑定、会话和任务列表不得串读
+
+### Requirement: Explicit capability differences
+
+CodeZ SHALL 依据 Runtime 已协商能力控制功能入口；缺少能力时显示不可用原因，不得把不支持的操作作为成功处理。
+
+#### Scenario: Unsupported operation
+
+- **WHEN** ACP Agent 不支持某个 ZCode 专属会话操作
+- **THEN** 操作不可用或返回明确错误，原会话保持可继续使用
+
+#### Scenario: Runtime-specific thinking control
+
+- **WHEN** 当前 ACP Agent 公布了可设置的思考等级
+- **THEN** 会话页仅显示该 Agent 当前提供的等级，并在设置成功后更新当前值
+
+#### Scenario: Agent default thinking level
+
+- **WHEN** 用户选择 ACP 模型但未显式选择思考等级
+- **THEN** 输入框允许发送，Agent 保留自身默认等级；用户显式选择时才发送所选等级
+
+#### Scenario: Permission choice from Agent
+
+- **WHEN** ACP Agent 请求工具权限并提供多个选项
+- **THEN** 会话页显示本次原生选项，用户选择后只返回对应 optionId，取消则返回 cancelled
+
+### Requirement: Host-side ACP agent_servers registry
+
+CodeZ SHALL 在实际执行 Host 读取 `~/.codez/v2/agent-servers.json` 的 `agent_servers`。自定义配置键是稳定 ACP ID，`name` 仅用于显示，`command` 是绝对可执行路径，`args` 是字符串数组。Host SHALL 分条严格校验并用 argv 启动；不得通过 shell 执行，不得因一项无效阻断其他有效项或 ZCode CLI。远程客户端不得用自身路径替代 Host 路径。
+
+#### Scenario: Unknown configured Agent
+
+- **WHEN** 用户为代码中未列出的 ACP CLI 增加合法配置，且 Host 握手成功
+- **THEN** 该供应商出现在模型设置与现有模型选择器中，创建和恢复使用配置键绑定的同一 Agent
+
+#### Scenario: Invalid entry
+
+- **WHEN** 一项配置路径非绝对、文件不可执行或 args 不是字符串数组
+- **THEN** 该项显示具体错误，其他有效供应商仍可使用
+
+#### Scenario: Configuration removed or replaced
+
+- **WHEN** 既有 ACP 会话的配置项被删除、不可执行，或同一 ID 指向不同 Agent
+- **THEN** 历史仍可见，但会话不可继续；CodeZ 不改投 ZCode CLI 或另一 ACP Agent
+
+现阶段四个内置 ACP 供应商 SHALL 与配置注册表并存。配置方式经过陌生 Agent 和现有会话恢复验收之前 SHALL NOT 移除内置入口。
+
+### Requirement: Explicit ACP model sync and cached selection
+
+CodeZ SHALL 在模型设置中通过用户手动同步请求 ACP Agent 公布的模型和各模型思考等级。用户切换模型启用状态时 SHALL 立即持久保存，失败时恢复原状态并显示错误，不要求再次点击保存。保存后的模型列表 SHALL 持久缓存并在输入框既有模型选择器中显示；打开设置、进入会话或重启 CodeZ 不得隐式重新请求 Agent 模型信息。只有下一次用户手动同步才刷新候选。配置命令或参数改变后，旧缓存不得用于新进程身份。
+
+CodeZ SHALL 在设置页与模型选择器中展示 Agent 模型说明中明确提供的免费、折扣或积分倍率，不推测实际价格、不补写或手工标记。不同 ID 的同名模型 SHALL 保持独立可选，并展示足以区分它们的 Agent 说明或 ID。模型设置 SHALL 沿用现有设置页的紧凑列表、排版和语义色。
+
+#### Scenario: Sync, select and save
+
+- **WHEN** 用户手动同步某 ACP 供应商并切换部分模型启用状态
+- **THEN** 现有模型选择器只显示保存的模型；重启和重新打开设置仍使用缓存，直至再次手动同步
+
+#### Scenario: Immediate save fails
+
+- **WHEN** 用户切换模型启用状态但 Host 保存失败
+- **THEN** 设置页恢复原选择并展示错误，不将未保存的状态呈现为已保存
+
+#### Scenario: Agent advertises different models with the same name
+
+- **WHEN** Agent 返回两个 ID 不同、显示名称相同的模型
+- **THEN** 两项均可独立启用，并显示 Agent 提供的倍率或必要的 ID 供用户区分
+
+#### Scenario: Agent omits pricing information
+
+- **WHEN** Agent 的模型说明不含明确免费或折扣信息
+- **THEN** 设置页与模型选择器不显示相应价格标识

@@ -13,6 +13,7 @@ import { PROCESS_RESOURCE_CLI_LANES } from "./processResourceTelemetry.js";
 import { isKnownRemoteResourcePackageId } from "./remoteResourcePackages.js";
 import { zcodeProviderSchema } from "./providers.js";
 import { zcodeAgentProviderSchema } from "./zcode-agent-policy.js";
+import { agentRuntimeIdSchema } from "./agent-runtime.js";
 import { modelSelectionSchema } from "./model-selection.js";
 import { providerProvisioningTriggerSchema } from "./provider-provisioning.js";
 import {
@@ -1151,6 +1152,12 @@ export const zcodeTaskTargetChangedPatchSchema = zcodeTaskGoalChangedPatchSchema
 
 export const zcodeTaskMetaSchema = z.object({
   taskId: nonEmptyStringSchema,
+  runtimeId: agentRuntimeIdSchema.optional(),
+  nativeSessionId: nonEmptyStringSchema.optional(),
+  agentServerFingerprint: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   traceId: nonEmptyStringSchema,
   title: z.string(),
   titleOverridden: z.boolean().optional(),

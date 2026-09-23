@@ -37,6 +37,8 @@ import {
   type ModelProviderNavGroup,
 } from "./model-provider-section/constants.js";
 import { ModelProviderSectionDetail } from "./model-provider-section/Detail.js";
+import { AcpProviderDetail } from "./model-provider-section/AcpProviderDetail.js";
+import type { AgentRuntimeInstallStatus } from "@zcode/services";
 import { ModelProviderSectionLayout } from "./model-provider-section/SectionLayout.js";
 import { ProviderTemplatePicker } from "./model-provider-section/ProviderTemplatePicker.js";
 import type { CodingPlanLoginOptions } from "./model-provider-section/codingPlanPricingCards.js";
@@ -247,7 +249,20 @@ export function ModelProviderSection({
   const { intl, locale } = useZCodeIntl();
   const confirmDialog = useConfirmDialog();
   const platform = usePlatform();
-  const { modelSelectionService, oauthService, credentialService } = useServices();
+  const { modelSelectionService, oauthService, credentialService, zcodeAgentService } =
+    useServices();
+  const [acpStatuses, setAcpStatuses] = useState<AgentRuntimeInstallStatus[]>([]);
+  const [acpCreateOpen, setAcpCreateOpen] = useState(false);
+  const refreshAcpStatuses = useCallback(async () => {
+    try {
+      setAcpStatuses(await zcodeAgentService.listAgentRuntimes());
+    } catch (error) {
+      logger.warn("[ModelProviderSection] ACP 供应商探测失败", error);
+    }
+  }, [zcodeAgentService]);
+  useEffect(() => {
+    void refreshAcpStatuses();
+  }, [refreshAcpStatuses]);
   const {
     modelProviders,
     providerTemplates,
@@ -681,6 +696,7 @@ export function ModelProviderSection({
 
   const { navigationGroups, navigationItems, selectedNavItem, navigationUnavailable } =
     useModelProviderNavigation({
+      acpStatuses,
       presetProviders,
       modelProviders,
       entitledAccountProviderIds,
@@ -1058,6 +1074,7 @@ export function ModelProviderSection({
       presetLoading={presetLoading}
       customLoading={customLoading}
       onRefresh={() => {
+        void refreshAcpStatuses();
         void refreshModelProviderSection({
           refresh,
           // 手动刷新设置页时也要同时刷新 Z.ai / BigModel Team Plan 快照；
@@ -1084,15 +1101,43 @@ export function ModelProviderSection({
         </p>
       ) : null}
       {templatePickerOpen ? (
-        <ProviderTemplatePicker
-          templates={providerTemplates}
-          creating={creatingProvider}
-          onBack={() => setTemplatePickerOpen(false)}
-          onCreateFromTemplate={(templateId) => {
-            return handleCreateProvider({ templateId });
-          }}
-          onCreateCustom={(label) => {
-            return handleCreateProvider({ providerName: label });
+        acpCreateOpen ? (
+          <AcpProviderDetail
+            create
+            workspacePath={workspacePath}
+            configPath={acpStatuses[0]?.configPath}
+            onBack={() => setAcpCreateOpen(false)}
+            onSaved={(id) => {
+              setAcpCreateOpen(false);
+              setTemplatePickerOpen(false);
+              setSelectedNodeKey(`acp:${id}`);
+              void refreshAcpStatuses();
+              window.dispatchEvent(new Event("codez:acp-provider-models-changed"));
+            }}
+          />
+        ) : (
+          <ProviderTemplatePicker
+            templates={providerTemplates}
+            creating={creatingProvider}
+            onBack={() => setTemplatePickerOpen(false)}
+            onCreateAcp={() => setAcpCreateOpen(true)}
+            onCreateFromTemplate={(templateId) => {
+              return handleCreateProvider({ templateId });
+            }}
+            onCreateCustom={(label) => {
+              return handleCreateProvider({ providerName: label });
+            }}
+          />
+        )
+      ) : selectedNavItem?.type === "acp" ? (
+        <AcpProviderDetail
+          key={selectedNavItem.key}
+          status={selectedNavItem.status}
+          workspacePath={workspacePath}
+          configPath={acpStatuses[0]?.configPath}
+          onSaved={() => {
+            void refreshAcpStatuses();
+            window.dispatchEvent(new Event("codez:acp-provider-models-changed"));
           }}
         />
       ) : (

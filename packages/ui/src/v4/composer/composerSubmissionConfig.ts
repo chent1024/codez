@@ -29,7 +29,22 @@ export function createComposerSubmissionConfig(
     view?.providers
       .find((provider) => provider.providerId === selection.providerId)
       ?.models.find((candidate) => candidate.modelId === selection.modelId);
-  if (!mode.success || !selection || !model || !validateModelSelectionOptions(model, selection).ok)
+  const acpModel =
+    selection &&
+    view?.acpProviders
+      ?.find((provider) => provider.providerId === selection.providerId)
+      ?.models.find((candidate) => candidate.modelId === selection.modelId);
+  const acpLevel = selection?.options?.reasoningLevel;
+  const acpValid = Boolean(
+    acpModel &&
+    // 未显式选择时沿用 Agent 当前默认等级；仅校验用户确实提交的档位。
+    (!acpLevel || acpModel.reasoningLevels.some((level) => level.value === acpLevel)),
+  );
+  if (
+    !mode.success ||
+    !selection ||
+    (!acpValid && (!model || !validateModelSelectionOptions(model, selection).ok))
+  )
     return null;
   // 不读取 Session 或显示别名；复制所有选择叶子，防止 await 后用户切模改变本次请求。
   return Object.freeze({
@@ -38,7 +53,9 @@ export function createComposerSubmissionConfig(
     modelSelection: Object.freeze({
       providerId: selection.providerId,
       modelId: selection.modelId,
-      options: Object.freeze({ reasoningLevel: selection.options!.reasoningLevel! }),
+      ...(selection.options?.reasoningLevel
+        ? { options: Object.freeze({ reasoningLevel: selection.options.reasoningLevel }) }
+        : {}),
     }),
   });
 }

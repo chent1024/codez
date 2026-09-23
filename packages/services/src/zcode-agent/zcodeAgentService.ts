@@ -20,6 +20,7 @@ import { completeNewModelSelection } from "@zcode/provider";
 import type { OffPeakClientConfig } from "#src/coding-plan-subscription/codingPlanSubscription.js";
 import {
   ZCODE_SESSION_RUNTIME_PREFERENCES_REQUEST_TIMEOUT_MS,
+  ACP_DEFAULT_MODEL_ID,
   formatLogPrefix,
   resolveWorkspaceKey,
   type TraceId,
@@ -302,7 +303,7 @@ import {
   ZCodeProtocolRequestTimeoutError,
   type ZCodeProtocolClient,
 } from "./zcodeProtocolClient.js";
-import { getDataBaseDir } from "../paths.js";
+import { getZCodeDataRootDir } from "../paths.js";
 import {
   collectBrowserAmbientContext,
   type BrowserAmbientContextExecutor,
@@ -314,6 +315,18 @@ import {
 } from "./cuaOperationTurnTracker.js";
 import type { PipSessionEvent } from "@zcode/zcode-cua/pip-session";
 import { registerMemoryDiagnosticsProvider } from "#src/memoryDiagnostics.js";
+import { AcpV4Bridge } from "#src/agent-runtime/acpV4Bridge.js";
+import {
+  ACP_RUNTIME_CATALOG,
+  acpSpecIdentity,
+  resolveAcpRuntimeCommand,
+  resolveAcpRuntimeSpec,
+} from "#src/agent-runtime/acpRuntimeCatalog.js";
+import { readAcpModelCatalog, saveAcpModels } from "#src/agent-runtime/acpProviderModels.js";
+import {
+  readAgentServersRegistry,
+  saveAgentServerConfig,
+} from "#src/agent-runtime/agentServersRegistry.js";
 
 const logger = createServiceLogger("zcode-agent-service");
 const cuaOperationLogger = createServiceLogger("cua-operation-turn");
@@ -462,7 +475,7 @@ function savedWorkflowScopeParam(params: ZCodeAgentSavedWorkflowTarget): {
 }
 
 function ensurePluginManagementWorkspacePath(): string {
-  const workspacePath = join(getDataBaseDir(), ".zcode", PLUGIN_MANAGEMENT_WORKSPACE_DIR_NAME);
+  const workspacePath = join(getZCodeDataRootDir(), PLUGIN_MANAGEMENT_WORKSPACE_DIR_NAME);
   // 插件管理是控制面能力，不能复用可能因真实 workspace 被删而 EPIPE 的会话进程。
   // 这里给它固定一个内部 cwd；真实 workspace 仍通过协议参数传给 CLI 做 workspace-scope 判定。
   mkdirSync(workspacePath, { recursive: true });
@@ -867,6 +880,8 @@ interface CreateZCodeAgentServiceOptions extends Omit<
   resolveSessionRuntimePreferences?: (
     scope: ZCodeSessionRuntimePreferencesScope,
   ) => Promise<ZCodeSessionRuntimePreferencesResult>;
+  resolveAcpMemoryEnabled?: () => Promise<boolean>;
+  onAcpTaskChanged?: (target: ZCodeAgentWorkspaceTarget) => void;
   /** manual run 落库后由当前 host 直接派发；返回时 prompt 必须已被 session 接受。 */
   onAutomationManualRunRequested?: (params: {
     automation: ZCodeAutomation;
@@ -1126,6 +1141,12 @@ export function createZCodeAgentService(
   >();
   // v4 conversation 帧 fan-out：workspace 级 emitter，renderer 侧按 topic 自行路由。
   const conversationFrameEmitters = new Map<string, Emitter<ConversationTopicWireCandidate>>();
+  const acpV4Bridge = new AcpV4Bridge(
+    automationTaskIndexRepo,
+    (target, frame) => getConversationFrameEmitter(target).fire(frame),
+    () => options?.resolveAcpMemoryEnabled?.() ?? false,
+    (target) => options?.onAcpTaskChanged?.(target),
+  );
   const localTtftFactsEmitter = new Emitter<{ workspaceKey: string; facts: LocalTtftFacts }>();
   const conversationTelemetryFactEmitters = new Map<string, Emitter<ConversationTelemetryFact>>();
   const cuaPermissionObservationEmitter = new Emitter<ZCodeAgentCuaPermissionObservation>();
@@ -3320,6 +3341,121 @@ export function createZCodeAgentService(
   }
 
   return {
+    async listAgentRuntimes() {
+      const registry = await readAgentServersRegistry();
+      const agents = await Promise.all(
+        ACP_RUNTIME_CATALOG.map(async (spec) => {
+          try {
+            await resolveAcpRuntimeCommand(spec);
+            return {
+              id: spec.id,
+              name: spec.name,
+              installed: true,
+              command: spec.command,
+            };
+          } catch (error) {
+            return {
+              id: spec.id,
+              name: spec.name,
+              installed: false,
+              command: spec.command,
+              ...(spec.packageName ? { installHint: `npm install -g ${spec.packageName}` } : {}),
+              reason: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }),
+      );
+      const statuses = [
+        {
+          id: "zcode-cli" as const,
+          name: "ZCode CLI",
+          installed: true,
+          command: "built-in",
+          configPath: registry.path,
+        },
+        ...agents,
+        ...registry.servers.map((server) => ({
+          id: server.id,
+          name: server.name,
+          installed: true,
+          command: server.command,
+          configPath: registry.path,
+        })),
+        ...registry.issues.map((issue) => ({
+          id: issue.id,
+          name: issue.id,
+          installed: false,
+          command: "",
+          reason: issue.message,
+          configPath: registry.path,
+        })),
+      ];
+      return Promise.all(
+        statuses.map(async (status) => {
+          const spec = status.id === "zcode-cli" ? null : await resolveAcpRuntimeSpec(status.id);
+          if (!spec) return status;
+          try {
+            const catalog = await readAcpModelCatalog(status.id, acpSpecIdentity(spec));
+            return {
+              ...status,
+              models: [...catalog.models],
+              availableModels: [...catalog.availableModels],
+            };
+          } catch (error) {
+            return {
+              ...status,
+              models: [],
+              availableModels: [],
+              reason: error instanceof Error ? error.message : String(error),
+            };
+          }
+        }),
+      );
+    },
+    async saveAgentServer(input) {
+      await saveAgentServerConfig(input);
+      return this.listAgentRuntimes();
+    },
+    async saveAgentServerModels(input) {
+      const spec = await resolveAcpRuntimeSpec(input.runtimeId);
+      if (!spec) throw new Error(`ACP supplier is not configured: ${input.runtimeId}`);
+      const catalog = await readAcpModelCatalog(input.runtimeId, acpSpecIdentity(spec));
+      if (!catalog.availableModels.length)
+        throw new Error("Sync ACP models before saving this selection");
+      const available = catalog.availableModels;
+      const selected = [...new Set(input.modelIds)];
+      if (selected.some((id) => !available.some((model) => model.id === id)))
+        throw new Error("Selected ACP model is no longer advertised by the Agent");
+      await saveAcpModels(
+        input.runtimeId,
+        acpSpecIdentity(spec),
+        available.filter((model) => selected.includes(model.id)),
+        available,
+      );
+      return this.listAgentRuntimes();
+    },
+    async discoverAgentRuntimeConfig(params) {
+      const preview = await acpV4Bridge.coordinator.discoverConfig(params);
+      if (!params.modelId) {
+        const spec = await resolveAcpRuntimeSpec(params.runtimeId);
+        if (spec) {
+          const available = preview.models.length
+            ? preview.models
+            : [{ id: ACP_DEFAULT_MODEL_ID, name: "Default" }];
+          const fingerprint = acpSpecIdentity(spec);
+          const existing = await readAcpModelCatalog(params.runtimeId, fingerprint);
+          await saveAcpModels(
+            params.runtimeId,
+            fingerprint,
+            existing.models.filter((model) =>
+              available.some((candidate) => candidate.id === model.id),
+            ),
+            available,
+          );
+        }
+      }
+      return preview;
+    },
     async prepareStorage(params) {
       const client = await processManager.getClient(params);
       wireClient(client, params, "chat");
@@ -4923,6 +5059,16 @@ export function createZCodeAgentService(
     },
 
     async subscribeConversationV4(params: ZCodeAgentConversationSubscribeParams) {
+      if (await acpV4Bridge.isAcpTask({ ...params, taskId: params.sessionId })) {
+        const result = await acpV4Bridge.subscribe({ ...params, taskId: params.sessionId });
+        rememberV4SubscriptionRoute(
+          params,
+          conversationTopic(params.sessionId),
+          result.ack.subscriptionId,
+          resolveV4Connection(params).connectionId,
+        );
+        return result;
+      }
       const subscribeStartedAt = performance.now();
       const existingClient = processManager.getExistingClient(params);
       const cliProcessState: "reused" | "spawned" =
@@ -5016,14 +5162,36 @@ export function createZCodeAgentService(
     },
 
     async unsubscribeConversationV4(params: ZCodeAgentConversationUnsubscribeParams) {
+      const acpRoute = resolveV4UnsubscribeRoute(params, "conversation/");
+      if (acpRoute && acpV4Bridge.unsubscribe(acpRoute.subscriptionId)) {
+        forgetV4SubscriptionRoute(acpRoute);
+        return;
+      }
       await unsubscribeV4Route(params, "conversation/");
     },
 
     async resyncConversationV4(params: ZCodeAgentConversationResyncParams) {
+      const acpRoute = resolveV4UnsubscribeRoute(params, "conversation/");
+      if (acpRoute && acpV4Bridge.hasSubscription(acpRoute.subscriptionId)) {
+        const result = acpV4Bridge.resync(acpRoute.subscriptionId);
+        if (!result) throw new Error("fault.subscription.notOwned");
+        return result;
+      }
       return resyncV4Route(params, "conversation/");
     },
 
     async sendConversationCommandV4(params: ZCodeAgentConversationCommandParams) {
+      const createRuntime =
+        params.envelope.type === "createSession"
+          ? commandPayloadSchemas.createSession.parse(params.envelope.payload).runtimeId
+          : undefined;
+      const acpOwned =
+        createRuntime && createRuntime !== "zcode-cli"
+          ? true
+          : params.envelope.sessionId
+            ? await acpV4Bridge.isAcpTask({ ...params, taskId: params.envelope.sessionId })
+            : false;
+      if (acpOwned) return acpV4Bridge.command(params, params.envelope);
       const client = await getClient(params);
       const planPayload = params.envelope.payload as {
         planEnabled?: boolean;
@@ -5098,8 +5266,41 @@ export function createZCodeAgentService(
         commands: params.commands,
         ...(params.clock ? { clock: true } : {}),
       });
-      const client = await getReadOnlyClient(params);
-      return client.request(V4_METHODS.commandsQuery, query, commandsQueryResultSchema);
+      const classified = await Promise.all(
+        query.commands.map(async (key) => ({
+          key,
+          acp: await acpV4Bridge.queryCommand(params, key),
+        })),
+      );
+      const cliCommands = classified.filter((item) => item.acp === null).map((item) => item.key);
+      if (cliCommands.length === 0)
+        return commandsQueryResultSchema.parse({
+          results: classified.map(({ key, acp }) => ({ key, result: acp })),
+        });
+      // 时钟校准是桌面性能观测，不得为 ACP-only 工作区被动启动 ZCode CLI。
+      const client = await getReadOnlyClient(params, query.clock ? "existing-only" : undefined);
+      const cliResult = await client.request(
+        V4_METHODS.commandsQuery,
+        {
+          ...query,
+          commands: cliCommands,
+        },
+        commandsQueryResultSchema,
+      );
+      const cliById = new Map(
+        cliResult.results.map((item) => [
+          `${item.key.sessionId ?? ""}\0${item.key.commandId}`,
+          item,
+        ]),
+      );
+      return commandsQueryResultSchema.parse({
+        results: classified.map(({ key, acp }) =>
+          acp === null
+            ? cliById.get(`${key.sessionId ?? ""}\0${key.commandId}`)
+            : { key, result: acp },
+        ),
+        ...(cliResult.clock ? { clock: cliResult.clock } : {}),
+      });
     },
 
     async attachmentBeginV4(params: ZCodeAgentAttachmentBeginParams) {
@@ -5260,6 +5461,15 @@ export function createZCodeAgentService(
     async conversationRowsRangeV4(params: ZCodeAgentConversationRowsRangeParams) {
       const trusted = readTrustedZCodeAgentV4Connection(params);
       if (!trusted) throw new Error("fault.conversation.rowsRangeConnectionUntrusted");
+      if (await acpV4Bridge.isAcpTask({ ...params, taskId: params.sessionId })) {
+        await acpV4Bridge.coordinator.load({ ...params, taskId: params.sessionId });
+        return v4ConversationRowsRangeResultSchema.parse(
+          acpV4Bridge.coordinator.rowsRange({
+            ...params,
+            taskId: params.sessionId,
+          }),
+        );
+      }
       const client = await getReadOnlyClient(params);
       return client.request(
         V4_METHODS.conversationRowsRange,
@@ -5622,6 +5832,7 @@ export function createZCodeAgentService(
     },
 
     disposeAll(): void {
+      void acpV4Bridge.dispose();
       processManager.disposeAll();
       pluginProcessManager.disposeAll();
       mcpStatusProcessManager.disposeAll();
@@ -5634,6 +5845,7 @@ export function createZCodeAgentService(
 
     async disposeAllAndWait(): Promise<void> {
       await Promise.all([
+        acpV4Bridge.dispose(),
         processManager.disposeAllAndWait(),
         pluginProcessManager.disposeAllAndWait(),
         mcpStatusProcessManager.disposeAllAndWait(),

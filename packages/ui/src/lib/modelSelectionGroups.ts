@@ -35,7 +35,7 @@ export function buildRegistryModelSelectGroups(
   view: ModelSelectionView,
   labels: ModelProviderGroupLabelOptions = {},
 ): ModelSelectGroup[] {
-  return view.providers.flatMap((provider) => {
+  const apiGroups = view.providers.flatMap((provider) => {
     if (!supportsRegistryApiFormat(selectedProvider, provider.config.api?.type)) {
       return [];
     }
@@ -66,6 +66,40 @@ export function buildRegistryModelSelectGroups(
       },
     ];
   });
+  const acpGroups: ModelSelectGroup[] = (view.acpProviders ?? []).map((provider) => ({
+    key: `acp-provider:${provider.providerId}`,
+    label: provider.providerName,
+    labelBadge: "ACP",
+    items: provider.models.map((model) => ({
+      key: `acp-provider:${provider.providerId}:${model.modelId}`,
+      value: encodeCustomModelValue(provider.providerId, model.modelId),
+      name: disambiguateAcpModelName(model, provider.models),
+      ...(model.description ? { badgeLabel: extractAcpBenefitBadge(model.description) } : {}),
+    })),
+  }));
+  return [...apiGroups, ...acpGroups];
+}
+
+/** 同名的不同模型显示 Agent ID 后缀，避免把两个选择项误认成同一模型。 */
+export function disambiguateAcpModelName<
+  T extends { id?: string; modelId?: string; name: string; description?: string },
+>(model: T, models: readonly T[]): string {
+  const id = model.id ?? model.modelId;
+  const sameName = models.filter((other) => other.name === model.name);
+  if (sameName.length < 2 || !id) return model.name;
+  const suffix = id.slice(id.lastIndexOf(":") + 1);
+  const uniqueSuffix = sameName.every(
+    (other) => other === model || (other.id ?? other.modelId)?.split(":").at(-1) !== suffix,
+  );
+  return `${model.name} · ${uniqueSuffix ? suffix : id}`;
+}
+
+/** 只展示 Agent 描述中明示的优惠或积分倍率，不推断实际价格。 */
+export function extractAcpBenefitBadge(description: string): string | undefined {
+  const explicit = description.match(
+    /(?:\bfree\b|免费|\d+(?:\.\d+)?\s*%\s*(?:off|discount)|\d+(?:\.\d+)?\s*折|折扣|\bx\s*\d+(?:\.\d+)?(?:\s*credits?)?\b|\b\d+(?:\.\d+)?\s*x(?:\s*credits?)?\b)/iu,
+  );
+  return explicit?.[0];
 }
 
 function getRegistryAccountProviderGroupPresentation(

@@ -201,6 +201,17 @@ export interface ModelSelectionViewInput {
 export interface ModelSelectionView extends Partial<EffectiveModelSelectionResult> {
   readonly revision: number;
   readonly providers: readonly ModelSelectionProviderView[];
+  /** ACP 供应商与 API Registry 并列呈现；其模型事实来自目标 Host 握手。 */
+  readonly acpProviders?: readonly {
+    readonly providerId: string;
+    readonly providerName: string;
+    readonly models: readonly {
+      readonly modelId: string;
+      readonly name: string;
+      readonly description?: string;
+      readonly reasoningLevels: readonly { readonly value: string; readonly name: string }[];
+    }[];
+  }[];
   readonly preferredSelection?: ModelSelection;
 }
 

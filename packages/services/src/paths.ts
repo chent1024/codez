@@ -39,17 +39,17 @@ export function getDataBaseDir(): string {
   return defaultDataBaseDir;
 }
 
-/** {dataBaseDir}/.zcode */
+/** {dataBaseDir}/.codez; independent of the official ZCode installation. */
 export function getZCodeDataRootDir(): string {
-  return join(getDataBaseDir(), ".zcode");
+  return join(getDataBaseDir(), ".codez");
 }
 
-/** 非项目对话共享的真实工作目录；默认 ~/.zcode/workspace/default。 */
+/** 非项目对话共享的真实工作目录；默认 ~/.codez/workspace/default。 */
 export function getConversationWorkspaceDir(): string {
   return join(getZCodeDataRootDir(), "workspace", "default");
 }
 
-/** {dataBaseDir}/.zcode/v2 */
+/** {dataBaseDir}/.codez/v2 */
 export function getAppConfigDir(): string {
   return join(getZCodeDataRootDir(), "v2");
 }
@@ -229,8 +229,8 @@ export function getLegacyDeletedTaskSessionSnapshotPath(
  * state must only live at the default homedir location.
  */
 export async function copyDataDirectory(oldBaseDir: string, newBaseDir: string): Promise<void> {
-  const oldDir = join(oldBaseDir, ".zcode", "v2");
-  const newDir = join(newBaseDir, ".zcode", "v2");
+  const oldDir = join(oldBaseDir, ".codez", "v2");
+  const newDir = join(newBaseDir, ".codez", "v2");
   await cp(oldDir, newDir, {
     recursive: true,
     force: false,

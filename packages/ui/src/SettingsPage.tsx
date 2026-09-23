@@ -1809,17 +1809,19 @@ export function SettingsPage({
                         ) : activeSection === "modelProvider" ? (
                           <ServiceProvider services={localHostServices}>
                             {/* 模型配置属于本机全局事实源；激活远端 workspace 时也不能注入远端 Host。 */}
-                            <ModelProviderSection
-                              workspacePath={activeWorkspacePath ?? captionWorkspacePath ?? ""}
-                              connectivityWorkspacePath={
-                                localModelProviderConnectivityWorkspacePath
-                              }
-                              connectivityWorkspaceRequired={isRemoteModelProviderWorkspace}
-                              pendingModelProviderTarget={pendingModelProviderTarget}
-                              onConsumePendingModelProviderTarget={() =>
-                                setPendingModelProviderTarget(undefined)
-                              }
-                            />
+                            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+                              <ModelProviderSection
+                                workspacePath={activeWorkspacePath ?? captionWorkspacePath ?? ""}
+                                connectivityWorkspacePath={
+                                  localModelProviderConnectivityWorkspacePath
+                                }
+                                connectivityWorkspaceRequired={isRemoteModelProviderWorkspace}
+                                pendingModelProviderTarget={pendingModelProviderTarget}
+                                onConsumePendingModelProviderTarget={() =>
+                                  setPendingModelProviderTarget(undefined)
+                                }
+                              />
+                            </div>
                           </ServiceProvider>
                         ) : activeSection === "memory" ? (
                           <ServiceProvider services={localHostServices}>

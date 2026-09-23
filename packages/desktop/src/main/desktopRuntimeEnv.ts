@@ -29,6 +29,7 @@ import { resolvePlatformKeyForPackagedApp } from "../../scripts/target-platform.
 import {
   getAppConfigDir,
   getDataBaseDir,
+  getZCodeDataRootDir,
   ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV,
   ZCODE_WINDOWS_APP_INSTALL_DIR_ENV,
 } from "@zcode/services/node";
@@ -60,7 +61,7 @@ function isTruthyRuntimeEnvOverride(name: string): boolean {
 // 这里允许测试显式隔离运行时身份，正常桌面/远控路径保持原来的默认值。
 export const runtimeApplicationName =
   readRuntimeEnvOverride("ZCODE_DESKTOP_APPLICATION_NAME") ??
-  (isLocalDevelopmentRuntime ? "ZCode Dev" : isPreviewPackagedRuntime ? "ZCode Preview" : "ZCode");
+  (isLocalDevelopmentRuntime ? "CodeZ Dev" : isPreviewPackagedRuntime ? "CodeZ Preview" : "CodeZ");
 // Electron 的 app.getPath("home") 不一定跟随测试进程里的 HOME 覆盖。
 // e2e 默认工作区依赖 home 路径，因此提供显式覆盖，避免测试写到开发者真实 ~/ZCodeProject。
 export const runtimeHomePath = readRuntimeEnvOverride("ZCODE_DESKTOP_HOME_DIR");
@@ -495,7 +496,7 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
             )
           ? rawInheritedEnv.ZCODE_CUA_BUNDLED_HELPER_APP_PATH?.trim() ||
             join(
-              rawInheritedEnv.ZCODE_HOME?.trim() || join(homedir(), ".zcode"),
+              rawInheritedEnv.ZCODE_HOME?.trim() || join(homedir(), ".codez"),
               "computer-use",
               "dev",
               DEV_HELPER_APP_NAME,
@@ -554,6 +555,9 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
     // 这里从 main 进程显式下发，agent 子进程继承 host env 后即可稳定写入请求 header。
     [ZCODE_APP_VERSION_ENV]: ZCODE_VERSION,
     ...(dataBaseDir !== homedir() ? { ZCODE_DATA_BASE_DIR: dataBaseDir } : {}),
+    ZCODE_STORAGE_DIR: getZCodeDataRootDir(),
+    ZCODE_HOME: getZCodeDataRootDir(),
+    ZCODE_SESSION_DB_PATH: join(getZCodeDataRootDir(), "cli", "db", "db.sqlite"),
     ...(windowsAppInstallDir ? { [ZCODE_WINDOWS_APP_INSTALL_DIR_ENV]: windowsAppInstallDir } : {}),
     ...(bundledCuaHelperAppPath
       ? { [ZCODE_CUA_BUNDLED_HELPER_APP_PATH_ENV]: bundledCuaHelperAppPath }

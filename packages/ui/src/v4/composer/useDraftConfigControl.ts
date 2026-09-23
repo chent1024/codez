@@ -176,9 +176,17 @@ export function useDraftConfigControl(params: {
   stateRef.current = currentState;
   // 原因：按 revision 清草稿会把短暂不可用永久写成空选择。这里只派生当前结果，
   // 正文/模式自动保存继续保存 draft 中的原意图；读取未就绪时保留展示，提交由 View 门禁阻断。
-  const effectiveSelection = modelSelectionView
-    ? (modelSelectionView.effectiveSelection ?? undefined)
-    : draft.modelSelection;
+  const draftUsesExternalProvider = Boolean(
+    draft.modelSelection &&
+    !modelSelectionView?.providers.some(
+      (candidate) => candidate.providerId === draft.modelSelection?.providerId,
+    ),
+  );
+  const effectiveSelection = draftUsesExternalProvider
+    ? draft.modelSelection
+    : modelSelectionView
+      ? (modelSelectionView.effectiveSelection ?? undefined)
+      : draft.modelSelection;
   const draftConfig = useMemo<Partial<SessionConfigState>>(
     () => ({
       mode: draft.mode,

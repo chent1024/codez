@@ -428,16 +428,18 @@ function V4ComposerModelControlsImpl({
     [onConfigPickerOpenChange],
   );
 
-  const modelOption = modelSelectionView?.providers.some((provider) => provider.models.length > 0)
-    ? ({
-        id: "model",
-        name: "Model",
-        category: "model",
-        type: "select",
-        currentValue: "",
-        options: [],
-      } satisfies ZCodeConfigOption)
-    : undefined;
+  const modelOption =
+    modelSelectionView?.providers.some((provider) => provider.models.length > 0) ||
+    modelSelectionView?.acpProviders?.some((provider) => provider.models.length > 0)
+      ? ({
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "",
+          options: [],
+        } satisfies ZCodeConfigOption)
+      : undefined;
 
   // 空模型/档位曾被 Session 旧值补回，界面显示与实际不可提交状态矛盾。
   // 初始化已经由 Composer owner 完成；显示层只消费它，不能再次补值。
@@ -770,9 +772,13 @@ function V4ComposerModelControlsImpl({
   // 当前投影模型的编码值：provider 命中目录则按自定义模型编码，否则回落裸 model id。
   const rawModelValue = useMemo(() => {
     if (!effectiveConfig || !effectiveConfig.model) return "";
-    const providerExists = modelSelectionView?.providers.some(
-      (candidate) => candidate.providerId === effectiveConfig.provider,
-    );
+    const providerExists =
+      modelSelectionView?.providers.some(
+        (candidate) => candidate.providerId === effectiveConfig.provider,
+      ) ||
+      modelSelectionView?.acpProviders?.some(
+        (candidate) => candidate.providerId === effectiveConfig.provider,
+      );
     if (providerExists) {
       return encodeCustomModelValue(effectiveConfig.provider, effectiveConfig.model);
     }
@@ -801,7 +807,11 @@ function V4ComposerModelControlsImpl({
     const providerName =
       modelSelectionView?.providers.find(
         (candidate) => candidate.providerId === effectiveConfig?.provider,
-      )?.providerName ?? undefined;
+      )?.providerName ??
+      modelSelectionView?.acpProviders?.find(
+        (candidate) => candidate.providerId === effectiveConfig?.provider,
+      )?.providerName ??
+      undefined;
     return resolveV4ModelTriggerDisplay({
       modelGroups: modelSelectGroups,
       normalizedValue: normalizedModelValue,

@@ -25,6 +25,7 @@ import {
   ZCODE_AGENT_PROVIDER,
 } from "@zcode/shared";
 import type {
+  AgentRuntimeId,
   ConversationShareAccessMode,
   GitChangeSourceId,
   GitRepositorySummary,
@@ -51,6 +52,7 @@ import {
 } from "@/lib/conversationShareError.js";
 import { localizeConversationShareUrl } from "@zcode/shared";
 import type {
+  AgentRuntimeInstallStatus,
   ConversationShareAllowedArtifact,
   ConversationShareTurnPreflightResult,
   ImportedConversationShare,
@@ -553,8 +555,13 @@ export function SessionPane({
     fileRewindPreview,
   } = useV4Conversation();
   const platform = useOptionalPlatform();
-  const { conversationShareService, modelSelectionService, zcodeSessionService, zcodeTaskService } =
-    useServices();
+  const {
+    conversationShareService,
+    modelSelectionService,
+    zcodeAgentService,
+    zcodeSessionService,
+    zcodeTaskService,
+  } = useServices();
   const { intl, locale } = useZCodeIntl();
   const slashCommands = useSlashCommands(workspacePath, workspaceIdentity);
   const baseWorkspaceServices = useBaseWorkspaceServices();
@@ -593,6 +600,24 @@ export function SessionPane({
   const [lease, setLease] = useState<SessionLease | null>(null);
   const state = useConversationProjection(lease);
   const snapshot = state.snapshot;
+  const [acpStatuses, setAcpStatuses] = useState<AgentRuntimeInstallStatus[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void zcodeAgentService.listAgentRuntimes().then(
+        (statuses) => {
+          if (!cancelled) setAcpStatuses(statuses);
+        },
+        (error) => logger.warn("[v4-pane] 读取已保存 ACP 模型失败", error),
+      );
+    };
+    refresh();
+    window.addEventListener("codez:acp-provider-models-changed", refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("codez:acp-provider-models-changed", refresh);
+    };
+  }, [zcodeAgentService]);
   const newlyCreatedSessionIdRef = useRef<string | null>(null);
   const shareDraft = useConversationShareSelectionStore((storeState) =>
     sessionId ? storeState.drafts[sessionId] : undefined,
@@ -1258,8 +1283,35 @@ export function SessionPane({
     agentStartupAllowed: draftAgentStartupAllowed,
     modelSelectionService,
   });
-  const modelSelectionView =
+  const baseModelSelectionView =
     modelSelectionRead.state.status === "ready" ? modelSelectionRead.state.view : null;
+  const modelSelectionView = useMemo(() => {
+    if (!baseModelSelectionView) return null;
+    return {
+      ...baseModelSelectionView,
+      acpProviders: acpStatuses
+        .filter((status) => status.id !== "zcode-cli" && status.installed && status.models?.length)
+        .map((status) => ({
+          providerId: status.id,
+          providerName: status.name,
+          models: (status.models ?? []).map((model) => ({
+            modelId: model.id,
+            name: model.name,
+            ...(model.description ? { description: model.description } : {}),
+            reasoningLevels: model.thoughtLevels ?? [],
+          })),
+        })),
+    };
+  }, [baseModelSelectionView, acpStatuses]);
+  const selectedDraftProviderId = draftConfig?.modelSelection?.providerId ?? draftConfig?.provider;
+  const selectedRuntimeId: AgentRuntimeId = sessionId
+    ? (snapshot?.meta.runtimeId ?? "zcode-cli")
+    : acpStatuses.some(
+          (status) => status.id === selectedDraftProviderId && status.id !== "zcode-cli",
+        )
+      ? (selectedDraftProviderId ?? "zcode-cli")
+      : "zcode-cli";
+  const isAcpRuntime = selectedRuntimeId !== "zcode-cli";
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
   useEffect(() => {
     if (sessionId !== null) {
@@ -2279,7 +2331,7 @@ export function SessionPane({
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
   const { binding: prewarmBinding } = useDraftSessionPrewarm({
-    enabled: sessionId === null && draftAgentStartupAllowed,
+    enabled: sessionId === null && !isAcpRuntime && draftAgentStartupAllowed,
     workspaceKey,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
@@ -2538,6 +2590,72 @@ export function SessionPane({
       const readyAttachments = options?.attachments ?? [];
       const sharedContextRefs = options?.sharedContextRefs;
       const contextAttachmentCount = options?.contextAttachmentCount ?? 0;
+      const chosenProviderId = submission?.modelSelection.providerId;
+      const chosenAcp = acpStatuses.some(
+        (status) => status.id === chosenProviderId && status.id !== "zcode-cli",
+      );
+      if (sessionId && chosenProviderId && chosenAcp !== isAcpRuntime) {
+        toast("切换 API 与 ACP 供应商需要新建会话");
+        return "blocked" as const;
+      }
+      if (isAcpRuntime) {
+        if (!submission || chosenProviderId !== selectedRuntimeId) {
+          toast("当前会话只能使用创建时的 ACP 供应商");
+          return "blocked" as const;
+        }
+        if (readyAttachments.length || sharedContextRefs?.length || contextAttachmentCount > 0) {
+          toast("当前 ACP Runtime 暂不支持此类附件或引用");
+          return "blocked" as const;
+        }
+        if (sessionId === null) {
+          const groupedDraftTaskAtSend = useZCodeSessionStore
+            .getState()
+            .getWorkspaceState(workspacePath, workspaceIdentity).groupedDraftTask;
+          const ack = await dispatchSubmissionCommand(
+            "createSession",
+            {
+              workspaceId: workspaceKey,
+              runtimeId: selectedRuntimeId,
+              acpConfig: {
+                modelId: submission.modelSelection.modelId,
+                thoughtLevel: submission.modelSelection.options?.reasoningLevel,
+              },
+              firstInput: { text },
+            },
+            null,
+          );
+          if (ack.status !== "accepted" || ack.result?.type !== "createSession")
+            throw new Error(ack.reasonCode ?? "ACP 会话创建失败");
+          handleDraftSessionCreated(
+            ack.result.sessionId,
+            groupedDraftTaskAtSend,
+            createSourceAtSend,
+            ack.commandId,
+          );
+          return "sent" as const;
+        }
+        if (
+          submission.modelSelection.modelId !== snapshot?.config.model ||
+          (submission.modelSelection.options?.reasoningLevel ?? "") !== snapshot?.config.thought
+        ) {
+          const configAck = await dispatchSubmissionCommand(
+            "switchModelConfig",
+            {
+              provider: "acp",
+              model: submission.modelSelection.modelId,
+              thought: submission.modelSelection.options?.reasoningLevel ?? "",
+            },
+            sessionId,
+            snapshot?.revision,
+          );
+          if (configAck.status !== "accepted")
+            throw new Error(configAck.reasonCode ?? "ACP 模型配置未被接纳");
+        }
+        const ack = await dispatchSubmissionCommand("sendText", { text }, sessionId);
+        if (ack.status !== "accepted" && ack.status !== "duplicate")
+          throw new Error(ack.reasonCode ?? "ACP 输入未被接纳");
+        return "sent" as const;
+      }
       let slashCommand = parseV4VisibleSlashCommand(text, readyAttachments, {
         contextAttachmentCount,
       });
@@ -2907,6 +3025,9 @@ export function SessionPane({
       handleDraftSwitchMode,
       handleOpenSelectionSideConversationWithPrompt,
       intl,
+      isAcpRuntime,
+      selectedRuntimeId,
+      acpStatuses,
       lease,
       resolveInitialDraftConfig,
       createSubmissionFromComposer,
@@ -3382,6 +3503,7 @@ export function SessionPane({
 
   const followupModeSyncKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (isAcpRuntime) return;
     const targetSessionId = sessionId ?? prewarmSessionId;
     if (!targetSessionId || !appFollowupMode || snapshotRevision === null) return;
     if (snapshotSessionId !== targetSessionId) return;
@@ -3400,6 +3522,7 @@ export function SessionPane({
     );
   }, [
     appFollowupMode,
+    isAcpRuntime,
     configCommandBarrier,
     dispatchConfigCas,
     prewarmSessionId,
@@ -3415,6 +3538,18 @@ export function SessionPane({
     (modelProvider: string, model: string, sourceModel: ModelSelectionSource | null) => {
       const resolvedProvider =
         modelProvider || draftConfigRef.current.provider || sourceModel?.provider || "";
+      if (sessionId && resolvedProvider) {
+        const targetIsAcp = acpStatuses.some(
+          (status) => status.id === resolvedProvider && status.id !== "zcode-cli",
+        );
+        if (
+          targetIsAcp !== isAcpRuntime ||
+          (targetIsAcp && resolvedProvider !== selectedRuntimeId)
+        ) {
+          toast("切换供应商类型需要新建会话");
+          return;
+        }
+      }
       logger.debug("[v4-pane] onSelectModel", {
         modelProvider: resolvedProvider,
         model,
@@ -3422,7 +3557,14 @@ export function SessionPane({
       });
       handleDraftSelectModel(resolvedProvider, model);
     },
-    [draftConfigRef, handleDraftSelectModel],
+    [
+      acpStatuses,
+      draftConfigRef,
+      handleDraftSelectModel,
+      isAcpRuntime,
+      selectedRuntimeId,
+      sessionId,
+    ],
   );
 
   const handleSelectThought = useCallback(
@@ -4364,75 +4506,78 @@ export function SessionPane({
   // subagent 右侧 child tab 是观察视图；复用普通 SessionPane 时
   // 若仍创建 composer，会让用户误以为可以直接向 child session 继续输入。
   const composerNode = readOnly ? null : (
-    <ConversationComposer
-      key="conversation-composer"
-      // Snapshot 仍服务用量、路由与运行态；工具栏的 mode/model 只读下方 Composer Draft。
-      snapshot={snapshot}
-      sessionId={sessionId}
-      // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
-      // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
-      skillCatalogSessionId={effectiveSessionId}
-      draftMode={isDraft}
-      draftConfig={draftConfig}
-      composerDraft={composerDraft}
-      replaceComposerDraft={replaceComposerDraft}
-      submissionReady={composerSubmissionReady}
-      updateComposerContent={updateComposerContent}
-      createSubmissionFromComposer={createSubmissionFromComposer}
-      contextHeader={isDraft ? draftComposerHeader : undefined}
-      centered={isDraft}
-      blockingRequestId={blockingInteractionId}
-      listenAddToChatEvents={focused}
-      externalTextInsertRequest={focused && sessionId === null ? composerTextInsertRequest : null}
-      onExternalTextInsertApplied={handleExternalTextInsertApplied}
-      autoFocusEnabled={focused}
-      disabled={
-        connecting ||
-        draftRuntimeRebuilding ||
-        queueEditActiveForCurrentComposer ||
-        quotaBanner.state.blocksSubmit
-      }
-      workspacePath={workspacePath}
-      workspaceIdentity={workspaceIdentity}
-      remoteSessionId={remoteSessionId ?? undefined}
-      modelSelectionView={modelSelectionView}
-      modelSelectionState={modelSelectionRead.state}
-      modelSelectionReload={modelSelectionRead.reload}
-      attachmentSessionId={effectiveSessionId}
-      attachmentPut={attachmentPut}
-      onRuntimeRestart={onRuntimeRestart}
-      onRuntimeLifecycle={onRuntimeLifecycle}
-      provider={provider}
-      telemetryDraftConfig={telemetryDraftConfig}
-      telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
-      readPlanIdentitySnapshot={readPlanIdentitySnapshot}
-      onSendText={handleSendText}
-      onDraftStateChange={handleComposerDraftStateChange}
-      composerRestoreRequest={composerRestoreRequest}
-      onComposerRestoreApplied={handleComposerRestoreApplied}
-      onStop={handleStopFromButton}
-      onSelectModel={handleSelectModel}
-      onSelectThought={handleSelectThought}
-      onSwitchMode={handleSwitchMode}
-      onOpenRunningBackgroundWorks={
-        sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
-      }
-      backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
-      // 父轮结束后 subagents.running 的目录投影可能短暂落后于仍为 running 的
-      // backgroundWorks；Composer 若直接读目录会提前隐藏 Agent 入口。这里复用状态面板按
-      // childSessionId 精确回退后的计数，让两个入口共享同一份运行态真值。
-      runningSubagentCount={runningAgentCount}
-      onRecoverCustomModelSelection={handleRecoverCustomModelSelection}
-      onSendCompressionCommand={handleSendCompressionCommand}
-      error={composerError}
-      onDismissError={handleDismissComposerError}
-      onOpenModelSettings={handleOpenModelSettings}
-      onOpenModelUpgrade={handleOpenModelUpgrade}
-      onOpenCodeViewer={onOpenCodeViewer}
-      suppressGoalCommands={selectionSideChat}
-      appSlashCommands={appSlashCommands}
-      onDropTargetControllerChange={handleDropTargetControllerChange}
-    />
+    <>
+      <ConversationComposer
+        key="conversation-composer"
+        // Snapshot 仍服务用量、路由与运行态；工具栏的 mode/model 只读下方 Composer Draft。
+        snapshot={snapshot}
+        sessionId={sessionId}
+        // 草稿 taskId 仍为 null，但 prewarm 已经拥有独立 AgentRuntime。
+        // 只给 Skill catalog 下发 effective id，避免 UI 扫到 prewarm runtime 尚未加载的新 Skill。
+        skillCatalogSessionId={isAcpRuntime ? null : effectiveSessionId}
+        draftMode={isDraft}
+        draftConfig={draftConfig}
+        composerDraft={composerDraft}
+        replaceComposerDraft={replaceComposerDraft}
+        submissionReady={composerSubmissionReady}
+        agentRuntimeId={selectedRuntimeId}
+        updateComposerContent={updateComposerContent}
+        createSubmissionFromComposer={createSubmissionFromComposer}
+        contextHeader={isDraft ? draftComposerHeader : undefined}
+        centered={isDraft}
+        blockingRequestId={blockingInteractionId}
+        listenAddToChatEvents={focused}
+        externalTextInsertRequest={focused && sessionId === null ? composerTextInsertRequest : null}
+        onExternalTextInsertApplied={handleExternalTextInsertApplied}
+        autoFocusEnabled={focused}
+        disabled={
+          connecting ||
+          draftRuntimeRebuilding ||
+          queueEditActiveForCurrentComposer ||
+          (!isAcpRuntime && quotaBanner.state.blocksSubmit)
+        }
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        remoteSessionId={remoteSessionId ?? undefined}
+        modelSelectionView={modelSelectionView}
+        modelSelectionState={modelSelectionRead.state}
+        modelSelectionReload={modelSelectionRead.reload}
+        attachmentSessionId={isAcpRuntime ? null : effectiveSessionId}
+        attachmentPut={attachmentPut}
+        onRuntimeRestart={onRuntimeRestart}
+        onRuntimeLifecycle={onRuntimeLifecycle}
+        provider={provider}
+        telemetryDraftConfig={telemetryDraftConfig}
+        telemetryVisible={telemetryVisible && conversationTelemetryForegroundEnabled}
+        readPlanIdentitySnapshot={readPlanIdentitySnapshot}
+        onSendText={handleSendText}
+        onDraftStateChange={handleComposerDraftStateChange}
+        composerRestoreRequest={composerRestoreRequest}
+        onComposerRestoreApplied={handleComposerRestoreApplied}
+        onStop={handleStopFromButton}
+        onSelectModel={handleSelectModel}
+        onSelectThought={handleSelectThought}
+        onSwitchMode={handleSwitchMode}
+        onOpenRunningBackgroundWorks={
+          sessionId && runningBackgroundWorkCount > 0 ? handleOpenRunningBackgroundWorks : undefined
+        }
+        backgroundWorkOpenTarget={soleRunningWorkflowRunTarget ? "workflow-run" : "panel"}
+        // 父轮结束后 subagents.running 的目录投影可能短暂落后于仍为 running 的
+        // backgroundWorks；Composer 若直接读目录会提前隐藏 Agent 入口。这里复用状态面板按
+        // childSessionId 精确回退后的计数，让两个入口共享同一份运行态真值。
+        runningSubagentCount={runningAgentCount}
+        onRecoverCustomModelSelection={handleRecoverCustomModelSelection}
+        onSendCompressionCommand={handleSendCompressionCommand}
+        error={composerError}
+        onDismissError={handleDismissComposerError}
+        onOpenModelSettings={handleOpenModelSettings}
+        onOpenModelUpgrade={handleOpenModelUpgrade}
+        onOpenCodeViewer={onOpenCodeViewer}
+        suppressGoalCommands={selectionSideChat}
+        appSlashCommands={isAcpRuntime ? [] : appSlashCommands}
+        onDropTargetControllerChange={handleDropTargetControllerChange}
+      />
+    </>
   );
   const pendingGuideProjection = snapshot ? projectPendingGuideQueue(snapshot.queue) : null;
   const conversationBottomDockContent = readOnly ? null : shareActive && sessionId ? (

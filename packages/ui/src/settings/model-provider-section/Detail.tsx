@@ -832,6 +832,8 @@ export function ModelProviderSectionDetail({
     return null;
   }
 
+  if (selectedNavItem.type === "acp") return null;
+
   if (!selectedNavItem.provider) {
     return <ModelProviderLoadingCard loadingLabel={loadingLabel} />;
   }

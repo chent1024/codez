@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Model Provider 导航需要集中计算分组、选中项与 Coding Plan 权益态，后续拆分时再收敛。 */
 import { useEffect, useMemo } from "react";
 import type { ProviderSettingsFormProvider } from "@/lib/providerSettingsFormTypes.js";
+import type { AgentRuntimeInstallStatus } from "@zcode/services";
 import { getProviderFormLabel } from "@/lib/providerSettingsFormTypes.js";
 import type {
   ProviderFamilyConnectionSelection,
@@ -42,6 +43,7 @@ interface PresetProviderWithConfig extends PresetProviderSpec {
 }
 
 interface UseModelProviderNavigationOptions {
+  acpStatuses?: readonly AgentRuntimeInstallStatus[];
   presetProviders: PresetProviderWithConfig[];
   modelProviders: ProviderSettingsFormProvider[];
   /**
@@ -64,6 +66,7 @@ interface UseModelProviderNavigationOptions {
 }
 
 export function useModelProviderNavigation({
+  acpStatuses = [],
   presetProviders,
   modelProviders,
   entitledAccountProviderIds = new Set(),
@@ -221,11 +224,24 @@ export function useModelProviderNavigation({
           statusActive: provider.executable === true,
         })),
       },
+      {
+        id: "acp",
+        title: "ACP",
+        items: acpStatuses
+          .filter((status) => status.id !== "zcode-cli")
+          .map((status) => ({
+            key: `acp:${status.id}`,
+            type: "acp" as const,
+            label: status.name,
+            status,
+          })),
+      },
     ];
 
     return groups;
   }, [
     customProviders,
+    acpStatuses,
     codingPlanItems,
     connectionModeCodingPlanItems,
     // 左侧导航分组标题在这个 memo 内格式化。
@@ -524,7 +540,7 @@ export function connectionSelectionMatchesNavigationItem(
   selection: ProviderFamilyConnectionSelection,
   item: Exclude<ModelProviderNavGroup["items"][number], { type: "codingPlanLoading" }>,
 ): boolean {
-  if (item.type === "custom") return false;
+  if (item.type === "custom" || item.type === "acp") return false;
   const familySpec = resolveModelProviderFamilySpecByProviderId(item.presetId ?? "");
   if (familySpec?.id !== family) return false;
   if (selection.kind === "start-plan") {

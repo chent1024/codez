@@ -14,6 +14,7 @@ import type {
   ZCodeSessionActiveTurnKind,
 } from "./zcode-protocol-legacy-types.js";
 import type { ErrorAttribution } from "./zcode-protocol-v4/snapshot.js";
+import type { AgentRuntimeId } from "./agent-runtime.js";
 
 /**
  * ZCode task/session 投影共享类型定义
@@ -262,8 +263,14 @@ export interface ZCodeTaskPendingInteraction {
 }
 
 export interface ZCodeTaskMeta {
-  /** UI taskId 与 ZCode agent sessionId 保持一致，用于列表选择、日志关联和恢复会话。 */
+  /** 工作台稳定 ID；仅 ZCode CLI 会话与原生 sessionId 相同。 */
   taskId: string;
+  /** 创建时固定的 Runtime 归属；历史记录缺省为 zcode-cli。 */
+  runtimeId?: AgentRuntimeId;
+  /** ACP 原生 sessionId；ZCode CLI 使用 taskId，无需单独保存。 */
+  nativeSessionId?: string;
+  /** 自定义 ACP 注册条目的创建时身份；重用同一 ID 时阻止误连旧会话。 */
+  agentServerFingerprint?: string;
   /** session/任务级观测 traceId，不用于区分单次用户输入 */
   traceId: TraceId;
   /** 任务标题（用户输入或从首条消息截取） */

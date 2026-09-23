@@ -285,6 +285,10 @@ export function resolveSharedZCodeCredentialsPath(
   }
 
   const env = options.env ?? process.env;
+  const storageRoot = env.ZCODE_STORAGE_DIR?.trim();
+  if (storageRoot && !options.baseDir) {
+    return join(resolveUserPath(storageRoot), "v2", "credentials.json");
+  }
   const baseDir = options.baseDir ?? env[ZCODE_DATA_BASE_DIR_ENV_KEY] ?? homedir();
   return join(resolveUserPath(baseDir), ".zcode", "v2", "credentials.json");
 }
