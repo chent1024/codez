@@ -1,8 +1,11 @@
 # agent-runtime-selection Specification
 
 ## Purpose
+
 让用户通过现有模型供应商和模型选择流程使用 API 或 ACP，同时保证每条会话在创建、恢复和跨设备访问时由原执行适配器拥有。
+
 ## Requirements
+
 ### Requirement: ACP as a model provider form
 
 CodeZ SHALL 在现有模型供应商列表提供 ACP 供应商，列出受支持 ACP CLI 的安装、认证及可用状态。用户 SHALL 在现有输入框模型选择器中选择 ACP 供应商公布的模型与思考等级；输入框和设置页 SHALL NOT 增加独立的 Runtime 选择器或配置区域。
@@ -28,6 +31,16 @@ CodeZ SHALL 在新会话接纳首条输入之前持久化所选 providerId/model
 - **WHEN** CodeZ 重启并读取包含 ZCode CLI 与 ACP 会话的同一工作区任务索引
 - **THEN** 两类会话都出现在现有侧栏、分组、置顶和归档视图中，ACP 会话仍由保存的 Runtime ID 恢复
 - **AND** 历史第三方 CLI 导入行不会因这个读取规则重新混入当前任务列表
+
+#### Scenario: Local Host log pipe closes
+
+- **WHEN** 桌面 Local Host 的 stdout 或 stderr 日志管道断开，但窗口与 Host 的 IPC 仍可用
+- **THEN** 日志写入的 EPIPE 不终止 Host，ACP 会话与配置请求继续由原 Host 处理
+
+#### Scenario: Local Host exits unexpectedly
+
+- **WHEN** 桌面 Local Host 意外退出且窗口仍然存在
+- **THEN** 窗口有界重建 Host 与 renderer 服务连接，并从持久化任务与 ACP transcript 恢复会话视图；旧 Host 的未完成请求不得被当作成功结果；连续崩溃时停止自动重载并记录失败
 
 #### Scenario: Selection changes after session creation
 

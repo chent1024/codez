@@ -123,6 +123,7 @@ import { createRemoteWorkspaceServiceCollection } from "./remoteWorkspaceService
 import { getRemoteProviderProvisioningExecutor } from "./remoteProviderProvisioningService.js";
 import { createRemotePromptAttachmentTransferService } from "./promptAttachmentTransferService.js";
 import { shouldReportHostConsoleError, stringifyHostLogArg } from "./hostLog.js";
+import { ignoreBrokenHostLogPipes } from "./hostLogPipes.js";
 import { flushHostE2ECoverage } from "./e2eCoverage.js";
 import { runHostShutdownPhases, type HostShutdownResult } from "./hostShutdownPhases.js";
 import { initializeHostApiNetworkTransportOwner } from "./hostInitialization.js";
@@ -2239,6 +2240,10 @@ process.once("disconnect", () => {
   // parent IPC 消失后不会再有人发送 Dispose；有界清理结束后必须明确退出，避免 Host 常驻。
   void disposeHostResources("disconnect").finally(() => process.exit(1));
 });
+
+// 原因：Electron 关闭 Host 的日志管道后，console 写入会异步抛出 EPIPE；
+// 该管道不是服务 IPC，不能让一次调试日志终止仍可用的会话 Host。
+ignoreBrokenHostLogPipes();
 
 process.once("exit", () => {
   disposeHostResourcesBestEffort("exit");

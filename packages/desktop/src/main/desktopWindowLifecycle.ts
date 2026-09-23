@@ -121,6 +121,8 @@ export function createWindow(options: {
   registerMainApplicationWindow(wcId);
   let domReadyGeneration = 0;
   let cancelRuntimeProcessEnvWait: (() => void) | null = null;
+  let currentLocalHost: ElectronUtilityProcess | null = null;
+  let recentHostCrashTimes: number[] = [];
   scheduleArmsBrowserPerfLoadNudge(win.webContents);
   win.webContents.on("dom-ready", async () => {
     cancelRuntimeProcessEnvWait?.();
@@ -159,6 +161,7 @@ export function createWindow(options: {
         options.logger.info(
           `[createWindow] renderer reloaded, reattached to existing host (${label}), pid=${oldChild.pid}`,
         );
+        currentLocalHost = oldChild;
         options.syncAutoUpdaterStateToWindow(win);
         options.syncReadyUpdateToWindow(win);
         options.syncPostUpdateReleaseNotesToWindow(win);
@@ -172,6 +175,7 @@ export function createWindow(options: {
       }
     }
     if (oldChild) {
+      currentLocalHost = null;
       options.logger.info(
         `[createWindow] killing previous host process for (${label}), pid=${oldChild.pid ?? "unknown"}`,
       );
@@ -204,6 +208,28 @@ export function createWindow(options: {
         agentSpawnFallbackCwd: options.agentSpawnFallbackCwd,
       });
       options.windowHostProcessMap.set(wcId, child);
+      currentLocalHost = child;
+      child.once("exit", () => {
+        if (
+          currentLocalHost !== child ||
+          win.isDestroyed() ||
+          win.webContents.isDestroyed() ||
+          options.forceQuitRef.current
+        )
+          return;
+        currentLocalHost = null;
+        const now = Date.now();
+        recentHostCrashTimes = recentHostCrashTimes.filter((time) => now - time < 60_000);
+        // 原因：Host 意外退出后旧 MessagePort 的请求会悬挂；重载 renderer 复用
+        // 现有 dom-ready 路径重建 Host 和服务端口，并限制连续崩溃的重载次数。
+        if (recentHostCrashTimes.length >= 3) {
+          options.logger.warn(`[createWindow] local Host repeatedly exited (${label})`);
+          return;
+        }
+        recentHostCrashTimes.push(now);
+        options.logger.warn(`[createWindow] local Host exited, reloading window (${label})`);
+        win.webContents.reload();
+      });
       options.onHostProcessReady?.(wcId);
       options.syncAutoUpdaterStateToWindow(win);
       options.syncReadyUpdateToWindow(win);
