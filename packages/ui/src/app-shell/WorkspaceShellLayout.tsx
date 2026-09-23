@@ -7,7 +7,7 @@ import type {
 } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 
-import { TID_APP_HEADER } from "@zcode/shared";
+import { TID_APP_HEADER, isRemoteWorkspaceIdentity } from "@zcode/shared";
 // 保活：workspace tab 真正关闭时，按 workspaceKey 回收 side pane terminal 的常驻 PTY/xterm。
 // 对称下侧 Terminal.tsx 的 openWorkspaceKeys 回收。
 import { sidePaneTerminalSessionRegistry } from "@/terminal/sidePaneTerminalSessionRegistry.js";
@@ -36,6 +36,7 @@ import { DesktopWindowFrame } from "@/DesktopWindowFrame.js";
 import { WorkspacePluginPreview } from "@/WorkspacePluginPreview.js";
 import { useIsOfficeMode } from "@/hooks/useInterfaceMode.js";
 import { GitBranchSwitcher } from "@/GitBranchSwitcher.js";
+import { SessionWorkLocationPicker } from "@/SessionWorkLocationPicker.js";
 import { ScopedErrorBoundary } from "@/ErrorBoundary.js";
 
 import { AUTOMATIONS_TOAST_ANCHOR_ID, AutomationsSection } from "@/settings/AutomationsSection.js";
@@ -1165,6 +1166,37 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   // Git 分支切换器，与旧 ChatView 空态 contextHeaderContent 同构。壳级能力
   // （workspaceTabs / 远程连接回调）在此闭合，pane 只收 ReactNode。
   // onSelectWorkspace 语义与旧版一致：切到目标 workspace 的新草稿。
+  const [worktreeSelection, setWorktreeSelection] = useState<{
+    workspaceKey: string;
+    branch: string;
+  } | null>(null);
+  useEffect(() => {
+    setWorktreeSelection(null);
+  }, [
+    workspaceAbsPath,
+    workspaceIdentity,
+    activeTaskId,
+    workspaceShellZCodeState.draftFocusVersion,
+  ]);
+  const selectedWorktreeBranch =
+    worktreeSelection?.workspaceKey === (workspaceIdentity?.trim() || workspaceAbsPath)
+      ? worktreeSelection.branch
+      : null;
+  const handleSelectWorktreeBranch = useCallback(
+    (branch: string | null) => {
+      setWorktreeSelection(
+        branch ? { workspaceKey: workspaceIdentity?.trim() || workspaceAbsPath, branch } : null,
+      );
+    },
+    [workspaceAbsPath, workspaceIdentity],
+  );
+  const handleWorktreeSessionCreated = useCallback(
+    (worktreePath: string, sessionId: string) => {
+      setWorktreeSelection(null);
+      handleSelectTaskInChat(worktreePath, sessionId);
+    },
+    [handleSelectTaskInChat],
+  );
   const draftComposerHeader = useMemo(
     () => (
       <>
@@ -1189,6 +1221,18 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
           onSelectRemoteProject={onSelectRemoteProject}
           onCancelRemoteProject={onCancelRemoteProject}
         />
+        {!isOfficeMode && activeWorkspacePurpose === "project" && (
+          <SessionWorkLocationPicker
+            workspacePath={workspaceAbsPath}
+            gitSummary={gitState.summary}
+            remote={Boolean(
+              workspaceRemoteSessionId ||
+              (workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim())),
+            )}
+            selectedBranch={selectedWorktreeBranch}
+            onSelectBranch={handleSelectWorktreeBranch}
+          />
+        )}
         {isOfficeMode ? (
           <WorkspacePluginPreview
             onOpen={handleOpenPluginStore}
@@ -1197,7 +1241,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
             workspaceIdentity={workspaceIdentity}
             remoteSessionId={workspaceRemoteSessionId ?? undefined}
           />
-        ) : !isOfficeMode && activeWorkspacePurpose === "project" ? (
+        ) : !isOfficeMode && activeWorkspacePurpose === "project" && !selectedWorktreeBranch ? (
           <GitBranchSwitcher
             workspacePath={workspaceAbsPath}
             gitSummary={gitState.summary}
@@ -1224,6 +1268,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       gitDirtyFileCount,
       gitState.summary,
       handleRefreshGit,
+      handleSelectWorktreeBranch,
       handleSelectConversationWorkspace,
       handleStartDraftInWorkspaceInChat,
       isWindowsDesktop,
@@ -1235,6 +1280,7 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
       workspaceAbsPath,
       workspaceIdentity,
       workspaceTabs,
+      selectedWorktreeBranch,
     ],
   );
   const handleV4SessionDeleted = useCallback(() => {
@@ -1849,6 +1895,8 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
                               onSessionCreated={handleV4SessionCreated}
                               onSessionDeleted={handleV4SessionDeleted}
                               draftComposerHeader={draftComposerHeader}
+                              draftWorktreeBranch={selectedWorktreeBranch}
+                              onWorktreeSessionCreated={handleWorktreeSessionCreated}
                               onPrimaryDraftDropTargetControllerChange={
                                 setDraftHeaderDropTargetController
                               }

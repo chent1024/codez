@@ -266,6 +266,8 @@ export interface WorkbenchShellBinding {
   onSessionCreated?: (sessionId: string) => void;
   onSessionDeleted?: () => void;
   draftComposerHeader?: ReactNode;
+  draftWorktreeBranch?: string | null;
+  onWorktreeSessionCreated?: (workspacePath: string, sessionId: string) => void;
   onPrimaryDraftDropTargetControllerChange?: (
     controller: ConversationDropTargetController | null,
   ) => void;
@@ -568,6 +570,10 @@ export function WorkbenchLeafPane({
           onClosePane={isPrimary ? undefined : handleClosePane}
           workspaceBadge={!isPrimary && !isShellWorkspace ? workspaceBadgeFor(scope) : undefined}
           draftComposerHeader={isPrimary && !primaryBinding ? shell.draftComposerHeader : undefined}
+          draftWorktreeBranch={isPrimary && !primaryBinding ? shell.draftWorktreeBranch : null}
+          onWorktreeSessionCreated={
+            isPrimary && !primaryBinding ? shell.onWorktreeSessionCreated : undefined
+          }
           onDropTargetControllerChange={
             isPrimary && !primaryBinding
               ? shell.onPrimaryDraftDropTargetControllerChange

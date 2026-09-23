@@ -170,6 +170,7 @@ function getCommitMessageDiffQueries(
 export function createGitService(options?: {
   repo?: GitCliRepo;
   commitMessageGenerator?: GitCommitMessageGenerator;
+  readManagedWorktreeRoot?: () => Promise<string | undefined>;
 }): IGitService {
   const repo = options?.repo ?? createGitCliRepo();
 
@@ -208,6 +209,25 @@ export function createGitService(options?: {
         params.workspacePath,
         params.branchName,
         params.startPoint,
+      );
+    },
+
+    async createWorktree(params) {
+      return await repo.createWorktree(
+        params.workspacePath,
+        params.startBranchName,
+        await options?.readManagedWorktreeRoot?.(),
+      );
+    },
+
+    async listManagedWorktrees() {
+      return await repo.listManagedWorktrees(await options?.readManagedWorktreeRoot?.());
+    },
+
+    async removeManagedWorktree(params) {
+      await repo.removeManagedWorktree(
+        params.worktreePath,
+        await options?.readManagedWorktreeRoot?.(),
       );
     },
 

@@ -23,6 +23,7 @@ import {
   TID_V4_SESSION_PANE,
   testId,
   ZCODE_AGENT_PROVIDER,
+  isRemoteWorkspaceIdentity,
 } from "@zcode/shared";
 import type {
   AgentRuntimeId,
@@ -36,6 +37,7 @@ import type {
   AttachmentRef,
   CommandAck,
   CommandEnvelope,
+  CommandPayloadMap,
   CommandType,
   ConversationSnapshot,
   ConversationRowTarget,
@@ -63,6 +65,7 @@ import { DEFAULT_CODE_PREVIEW_SETTINGS } from "@/lib/codePreviewSettings.js";
 import type { CodeViewerSource } from "@/lib/codeViewer.js";
 import type { OpenAutomationsMain } from "@/lib/taskNavigationHistory.js";
 import { WORKSPACE_FILE_DRAG_MIME } from "@/lib/workspaceFileDrag.js";
+import { isAbsoluteFilePath } from "@/lib/path.js";
 import { buildChatSessionScrollMemoryKey } from "@/lib/chatSessionScrollMemory.js";
 import type { MessageFileLinkTarget } from "@/components/ai-elements/message.js";
 import { useServices } from "@/hooks/useServices.js";
@@ -207,6 +210,7 @@ import { createCommandEnvelope } from "@/v4/commandFactory.js";
 import { createConfigCommandBarrier } from "@/v4/configCommandBarrier.js";
 import { recordV4CommandAck } from "@/v4/commandAckObservability.js";
 import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
+import { acquireWorkspaceConnection } from "@/v4/workspaceConnectionRegistry.js";
 import type {
   ChatSearchResultHighlightRequest,
   ChatViewSummaryPanelVariant,
@@ -333,6 +337,8 @@ export interface SessionPaneProps {
    * 非 primary pane 不下发（workspace 切换是壳级动作）。
    */
   draftComposerHeader?: ReactNode;
+  draftWorktreeBranch?: string | null;
+  onWorktreeSessionCreated?: (workspacePath: string, sessionId: string) => void;
   /** 主草稿把 drop controller 提给 app shell 的标题栏；其他 pane 只在自身 surface 消费。 */
   onDropTargetControllerChange?: (controller: ConversationDropTargetController | null) => void;
   gitSummary?: GitRepositorySummary | null;
@@ -510,6 +516,8 @@ export function SessionPane({
   onClosePane,
   workspaceBadge,
   draftComposerHeader,
+  draftWorktreeBranch,
+  onWorktreeSessionCreated,
   onDropTargetControllerChange,
   gitSummary,
   gitDirtyFileCount,
@@ -558,6 +566,7 @@ export function SessionPane({
   const {
     conversationShareService,
     modelSelectionService,
+    gitService,
     zcodeAgentService,
     zcodeSessionService,
     zcodeTaskService,
@@ -2331,7 +2340,8 @@ export function SessionPane({
   // pane 未绑定会话时后台建 phase=draft 会话作预热载体：配置写 CAS 直达、首发复用。
   // 对外绑定语义不变（shell activeTaskId 仍 null），预热会话只是 pane 内部 effective 订阅目标。
   const { binding: prewarmBinding } = useDraftSessionPrewarm({
-    enabled: sessionId === null && !isAcpRuntime && draftAgentStartupAllowed,
+    enabled:
+      sessionId === null && !draftWorktreeBranch && !isAcpRuntime && draftAgentStartupAllowed,
     workspaceKey,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
@@ -2569,6 +2579,102 @@ export function SessionPane({
     [dispatchCommand, intl, settleCurrentQueueInputs],
   );
 
+  const worktreeFirstSendRef = useRef<{
+    path: string;
+    branch: string;
+    state: "ready" | "unknown" | "sent";
+  } | null>(null);
+  const worktreeFirstSendInFlightRef = useRef<Promise<void> | null>(null);
+  const performFirstInputInWorktree = useCallback(
+    async (
+      payload: Omit<CommandPayloadMap["createSession"], "workspaceId">,
+      createSourceAtSend: SessionCreateSource,
+    ) => {
+      if (
+        !draftWorktreeBranch ||
+        !onWorktreeSessionCreated ||
+        remoteSessionId ||
+        (workspaceIdentity?.trim() && isRemoteWorkspaceIdentity(workspaceIdentity.trim()))
+      ) {
+        throw new Error("本地工作树会话入口不可用");
+      }
+      const previous = worktreeFirstSendRef.current;
+      if (previous && previous.branch !== draftWorktreeBranch) {
+        throw new Error("工作树已经从原分支创建，请在新草稿中重新选择起点");
+      }
+      if (previous?.state === "unknown" || previous?.state === "sent") {
+        throw new Error("工作树首条消息的接纳结果尚未确认，请先检查新工作树中的会话");
+      }
+      const created = previous ?? {
+        path: (
+          await gitService.createWorktree({
+            workspacePath,
+            startBranchName: draftWorktreeBranch,
+          })
+        ).worktreePath,
+        branch: draftWorktreeBranch,
+        state: "ready" as "ready" | "unknown" | "sent",
+      };
+      worktreeFirstSendRef.current = created;
+      const envelope = createCommandEnvelope({
+        type: "createSession",
+        sessionId: null,
+        payload: { ...payload, workspaceId: created.path },
+      });
+      pendingCommandRegistry.record(envelope, {
+        workspace: { workspacePath: created.path },
+        sessionCreateSource: createSourceAtSend,
+      });
+      const targetLease = acquireWorkspaceConnection(
+        { workspacePath: created.path },
+        zcodeAgentService,
+      );
+      let ack: CommandAck;
+      try {
+        ack = await targetLease.transport.sendCommand(envelope);
+      } catch (error) {
+        created.state = "unknown";
+        throw error;
+      } finally {
+        targetLease.release();
+      }
+      pendingCommandRegistry.applyAck(envelope, ack);
+      if (ack.status !== "accepted" || ack.result?.type !== "createSession") {
+        throw new Error(ack.reasonCode ?? "工作树会话创建失败");
+      }
+      created.state = "sent";
+      onWorktreeSessionCreated(created.path, ack.result.sessionId);
+    },
+    [
+      draftWorktreeBranch,
+      gitService,
+      onWorktreeSessionCreated,
+      remoteSessionId,
+      workspaceIdentity,
+      workspacePath,
+      zcodeAgentService,
+    ],
+  );
+  const submitFirstInputInWorktree = useCallback(
+    async (
+      payload: Omit<CommandPayloadMap["createSession"], "workspaceId">,
+      createSourceAtSend: SessionCreateSource,
+    ) => {
+      // 创建工作树与首条消息共同单飞；重复点击不能在 mkdtemp 等待期间创建第二份目录。
+      const inFlight = worktreeFirstSendInFlightRef.current;
+      if (inFlight) return await inFlight;
+      const started = performFirstInputInWorktree(payload, createSourceAtSend);
+      worktreeFirstSendInFlightRef.current = started;
+      try {
+        await started;
+      } finally {
+        if (worktreeFirstSendInFlightRef.current === started) {
+          worktreeFirstSendInFlightRef.current = null;
+        }
+      }
+    },
+    [performFirstInputInWorktree],
+  );
   const dispatchSendTextAfterConfig = useCallback(
     async (
       text: string,
@@ -2608,6 +2714,26 @@ export function SessionPane({
           return "blocked" as const;
         }
         if (sessionId === null) {
+          if (draftWorktreeBranch) {
+            if (readyAttachments.some((attachment) => !isAbsoluteFilePath(attachment.ref))) {
+              throw new Error("工作树首条消息仅支持本地文件附件");
+            }
+            await submitFirstInputInWorktree(
+              {
+                runtimeId: selectedRuntimeId,
+                acpConfig: {
+                  modelId: submission.modelSelection.modelId,
+                  thoughtLevel: submission.modelSelection.options?.reasoningLevel,
+                },
+                firstInput: {
+                  text,
+                  ...(readyAttachments.length ? { attachments: readyAttachments } : {}),
+                },
+              },
+              createSourceAtSend,
+            );
+            return "sent" as const;
+          }
           const groupedDraftTaskAtSend = useZCodeSessionStore
             .getState()
             .getWorkspaceState(workspacePath, workspaceIdentity).groupedDraftTask;
@@ -2748,6 +2874,35 @@ export function SessionPane({
           onAcceptedSelection = captureAcceptedModelSelection(chosen, original);
           submission = { ...submission, modelSelection: chosen };
         }
+      }
+      if (sessionId === null && draftWorktreeBranch) {
+        // 上传引用与上下文引用绑定源草稿的预热会话；本地路径附件可零拷贝读取。
+        if (
+          readyAttachments.some((attachment) => !isAbsoluteFilePath(attachment.ref)) ||
+          sharedContextRefs?.length ||
+          contextAttachmentCount > 0
+        ) {
+          throw new Error("工作树首条消息仅支持本地文件附件，不支持会话上下文引用");
+        }
+        if (slashCommand) {
+          throw new Error("工作树首条消息暂不支持会话命令");
+        }
+        await submitFirstInputInWorktree(
+          {
+            firstInput: {
+              text: effectiveText,
+              ...submission,
+              ...(readyAttachments.length ? { attachments: readyAttachments } : {}),
+            },
+            ...buildDraftCreateConfigPayload(
+              { ...draftConfigRef.current, modelSelection: submission.modelSelection },
+              appFollowupMode,
+            ),
+          },
+          createSourceAtSend,
+        );
+        onAcceptedSelection?.();
+        return "sent" as const;
       }
       const prewarmTargetBeforeSend =
         sessionId === null ? prewarmBindingRef.current?.sessionId : null;
@@ -3043,6 +3198,8 @@ export function SessionPane({
       workspaceIdentity,
       workspaceKey,
       workspacePath,
+      draftWorktreeBranch,
+      submitFirstInputInWorktree,
     ],
   );
 

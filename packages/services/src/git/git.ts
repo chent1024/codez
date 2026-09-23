@@ -4,6 +4,8 @@ import type {
   GitCommitGraphRequest,
   GitCommitGraphResult,
   GitCreateBranchRequest,
+  GitCreateWorktreeRequest,
+  GitCreateWorktreeResult,
   GitChangesRequest,
   GitCommitRequest,
   GitCommitResult,
@@ -15,6 +17,7 @@ import type {
   GitIdentity,
   GitIgnoredPathsRequest,
   GitLocalBranchListResult,
+  GitManagedWorktreeListResult,
   GitPathMutationRequest,
   GitPushRequest,
   GitPushResult,
@@ -22,6 +25,7 @@ import type {
   GitRefreshResult,
   GitRepositoryRequest,
   GitRepositorySummary,
+  GitRemoveManagedWorktreeRequest,
   GitWorkspaceRepositoryInfo,
   GitFileChange,
   GitSwitchBranchRequest,
@@ -36,6 +40,9 @@ export interface IGitService {
   getCommitGraph(params: GitCommitGraphRequest): Promise<GitCommitGraphResult>;
   switchBranch(params: GitSwitchBranchRequest): Promise<GitBranchMutationResult>;
   createBranchAndSwitch(params: GitCreateBranchRequest): Promise<GitBranchMutationResult>;
+  createWorktree(params: GitCreateWorktreeRequest): Promise<GitCreateWorktreeResult>;
+  listManagedWorktrees(): Promise<GitManagedWorktreeListResult>;
+  removeManagedWorktree(params: GitRemoveManagedWorktreeRequest): Promise<void>;
   getChanges(params: GitChangesRequest): Promise<GitFileChange[]>;
   getIgnoredPaths(params: GitIgnoredPathsRequest): Promise<string[]>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;

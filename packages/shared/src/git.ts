@@ -145,6 +145,33 @@ export interface GitCreateBranchRequest extends GitRepositoryRequest {
   startPoint?: string;
 }
 
+export interface GitCreateWorktreeRequest extends GitRepositoryRequest {
+  startBranchName: string;
+}
+
+export interface GitCreateWorktreeResult {
+  worktreePath: string;
+  startCommitHash: string;
+}
+
+export interface GitManagedWorktree {
+  worktreePath: string;
+  sourceRepoRoot: string;
+  headCommitHash: string;
+  branchName: string | null;
+  isDirty: boolean;
+  isLocked: boolean;
+}
+
+export interface GitManagedWorktreeListResult {
+  rootPath: string;
+  worktrees: GitManagedWorktree[];
+}
+
+export interface GitRemoveManagedWorktreeRequest {
+  worktreePath: string;
+}
+
 export interface GitChangesRequest extends GitRepositoryRequest {
   sourceId: Extract<GitRepositoryChangeSourceId, "unstaged" | "staged">;
 }

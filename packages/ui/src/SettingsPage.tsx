@@ -71,6 +71,7 @@ import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
+import { WorktreeSettingsSection } from "@/settings/WorktreeSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
 import { ShortcutSettingsSection } from "@/settings/ShortcutSettingsSection.js";
 import { MigrationSection } from "@/settings/MigrationSection.js";
@@ -1925,6 +1926,13 @@ export function SettingsPage({
                             workspacePath={activeWorkspacePath}
                             workspaceIdentity={activeWorkspaceIdentity}
                           />
+                        ) : activeSection === "worktrees" ? (
+                          <ServiceProvider services={localHostServices}>
+                            <WorktreeSettingsSection
+                              onCreateTask={onCreateTask}
+                              openWorkspacePaths={workspaceTabs.map((tab) => tab.workspacePath)}
+                            />
+                          </ServiceProvider>
                         ) : activeSection === "browser" ? (
                           <BrowserSettingsSection
                             isDesktop={Boolean(isDesktop)}

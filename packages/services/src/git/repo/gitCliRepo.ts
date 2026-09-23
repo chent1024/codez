@@ -1,13 +1,14 @@
 /* eslint-disable max-lines */
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import type {
   GitBranchMutationAction,
   GitBranchMutationIssue,
   GitBranchMutationResult,
   GitCommitGraphCommit,
   GitCommitGraphRef,
+  GitCreateWorktreeResult,
   GitDiffQuery,
   GitDiffResult,
   GitIdentity,
@@ -58,6 +59,13 @@ import {
   type GitResolvedRepository,
   type GitStatusSnapshot,
 } from "./gitCliTypes.js";
+import {
+  assertManagedRootOutsideRepository,
+  getManagedWorktreeRoot,
+  listManagedWorktrees,
+  removeManagedWorktree,
+  writeManagedWorktreeMarker,
+} from "./managedWorktrees.js";
 
 export type {
   GitBranchComparisonChange,
@@ -1004,6 +1012,69 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
           status.summary.headRefType === "branch" ? status.summary.branchName : null,
         ),
       };
+    },
+
+    async createWorktree(
+      workspacePath: string,
+      startBranchName: string,
+      managedRootPath?: string,
+    ): Promise<GitCreateWorktreeResult> {
+      const repository = await this.resolveRepository(workspacePath);
+      if (!repository.isGitAvailable || !repository.isRepository) {
+        throw new Error("Git repository is unavailable");
+      }
+      const branches = await this.listLocalBranches(workspacePath);
+      const selected = branches.branches.find((branch) => branch.name === startBranchName);
+      if (!selected?.commitHash) {
+        throw new Error(`Local branch not found: ${startBranchName}`);
+      }
+      const startCommitHash = selected.commitHash;
+      const parent = getManagedWorktreeRoot(managedRootPath);
+      await assertManagedRootOutsideRepository(parent, repository.repoRoot);
+      await mkdir(parent, { recursive: true });
+      await assertManagedRootOutsideRepository(parent, repository.repoRoot);
+      const worktreeParent = await mkdtemp(join(parent, `${basename(repository.repoRoot)}-`));
+      const worktreePath = join(worktreeParent, basename(repository.repoRoot));
+      await writeManagedWorktreeMarker(worktreeParent, worktreePath);
+      const created = await commandProvider.run({
+        cwd: repository.repoRoot,
+        args: ["worktree", "add", "--detach", worktreePath, startCommitHash],
+        timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+        maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+      });
+      ensureGitCommandSucceeded("git worktree add", created);
+      const [head, root, sourceCommonDir, targetCommonDir] = await Promise.all([
+        commandProvider.run({ cwd: worktreePath, args: ["rev-parse", "HEAD"] }),
+        commandProvider.run({ cwd: worktreePath, args: ["rev-parse", "--show-toplevel"] }),
+        commandProvider.run({
+          cwd: repository.repoRoot,
+          args: ["rev-parse", "--git-common-dir"],
+        }),
+        commandProvider.run({
+          cwd: worktreePath,
+          args: ["rev-parse", "--git-common-dir"],
+        }),
+      ]);
+      for (const result of [head, root, sourceCommonDir, targetCommonDir]) {
+        ensureGitCommandSucceeded("git worktree verify", result);
+      }
+      if (
+        head.stdout.trim() !== startCommitHash ||
+        (await realpath(root.stdout.trim())) !== (await realpath(worktreePath)) ||
+        (await realpath(resolve(repository.repoRoot, sourceCommonDir.stdout.trim()))) !==
+          (await realpath(resolve(worktreePath, targetCommonDir.stdout.trim())))
+      ) {
+        throw new Error("Created worktree failed repository verification");
+      }
+      return { worktreePath, startCommitHash };
+    },
+
+    async listManagedWorktrees(managedRootPath?: string) {
+      return await listManagedWorktrees(commandProvider, managedRootPath);
+    },
+
+    async removeManagedWorktree(worktreePath: string, managedRootPath?: string) {
+      await removeManagedWorktree(commandProvider, worktreePath, managedRootPath);
     },
 
     async getCommitGraph(

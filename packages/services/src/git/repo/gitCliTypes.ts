@@ -1,5 +1,7 @@
 import type {
   GitBranchMutationResult,
+  GitCreateWorktreeResult,
+  GitManagedWorktreeListResult,
   GitChangeKind,
   GitCommitGraphCommit,
   GitDiffQuery,
@@ -86,6 +88,13 @@ export interface GitCliRepo {
     branchName: string,
     startPoint?: string,
   ): Promise<GitBranchMutationResult>;
+  createWorktree(
+    workspacePath: string,
+    startBranchName: string,
+    managedRootPath?: string,
+  ): Promise<GitCreateWorktreeResult>;
+  listManagedWorktrees(managedRootPath?: string): Promise<GitManagedWorktreeListResult>;
+  removeManagedWorktree(worktreePath: string, managedRootPath?: string): Promise<void>;
   getDiff(params: GitDiffQuery): Promise<GitDiffResult>;
   getBranchComparison(workspacePath: string): Promise<GitBranchComparisonSnapshot>;
   stage(workspacePath: string, paths: string[]): Promise<void>;

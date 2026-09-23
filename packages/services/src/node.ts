@@ -2327,6 +2327,7 @@ export function createLocalServices(options: {
   });
   const gitService = createGitService({
     commitMessageGenerator: gitCommitMessageGenerator,
+    readManagedWorktreeRoot: async () => (await settingService.get()).worktreeRootDirectory,
   });
   // task wrapper 由 ZCode task service adapter 提供；核心 session 状态由 ZCode agent server 维护。
   const zcodeTaskService = createZCodeTaskServiceAdapter({
@@ -2334,6 +2335,7 @@ export function createLocalServices(options: {
     taskIndexRepo,
     taskIndexSyncer: zcodeTaskIndexSyncer,
     settingService,
+    gitService,
     cuaProductMcpServerResolver,
   });
   const oauthService = createOAuthService(credentialService, {

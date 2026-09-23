@@ -348,6 +348,8 @@ export interface AppSettings {
   lastActiveTaskByWorkspace?: Record<string, string>;
   /** 数据目录的根路径（替代 homedir），默认为 os.homedir()；.zcode/v2 后缀不变 */
   dataBaseDir?: string;
+  /** CodeZ 托管工作树的自定义根目录；空值使用数据根目录下的 worktrees。 */
+  worktreeRootDirectory?: string;
   /** 自动更新安装完成后，等待首次启动展示的版本说明 */
   pendingPostUpdateReleaseNotes?: {
     version: string;

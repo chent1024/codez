@@ -124,6 +124,7 @@ import {
   OFF_PEAK_MUTATION_TOOL_NAMES,
 } from "#src/zcode-agent/automationToolPolicy.js";
 import type { ISettingService } from "#src/setting/setting.js";
+import type { IGitService } from "#src/git/git.js";
 import type {
   SessionMessageDeliveryResult,
   SessionMessageSendRequested,
@@ -181,6 +182,7 @@ interface CreateZCodeTaskServiceAdapterOptions {
   // 否则 desktop-continuous 路径和 task adapter 路径的事件订阅会分裂成两份，UI 收不全。
   taskIndexSyncer: ZCodeTaskIndexSyncer;
   settingService?: Pick<ISettingService, "get">;
+  gitService?: Pick<IGitService, "listManagedWorktrees" | "removeManagedWorktree">;
   cuaProductMcpServerResolver?: CuaProductMcpServerResolver;
 }
 
@@ -1409,6 +1411,38 @@ export function createZCodeTaskServiceAdapter(
         workspaceIdentity: params.workspaceIdentity,
         taskId: params.taskId,
         patch,
+      });
+    }
+  }
+
+  async function cleanupArchivedManagedWorktree(params: TaskTarget): Promise<void> {
+    // 托管工作树只在本地创建；远程 identity 即使与本机路径同名也不能触发本机删除。
+    if (!options.gitService || params.workspaceIdentity?.trim()) return;
+    try {
+      const listing = await options.gitService.listManagedWorktrees();
+      if (!listing.worktrees.some((entry) => entry.worktreePath === params.workspacePath)) return;
+
+      const remaining = await taskIndexRepo.listTaskMetas({
+        workspacePath: params.workspacePath,
+        archived: false,
+      });
+      if (remaining.length > 0) return;
+      const associated = await taskIndexRepo.listTaskMetas({ workspacePath: params.workspacePath });
+      if (
+        associated.length === 0 ||
+        associated.some((task) => task.status !== "completed" && task.status !== "error")
+      ) {
+        return;
+      }
+      // Windows 会把存活 Agent 的 cwd 视为占用；所有会话已归档且终止后先释放本 Host runtime。
+      await options.zcodeAgentService.disposeWorkspace({ workspacePath: params.workspacePath });
+      // Git 服务在真正 remove 前重新核验托管归属、文件状态和远端 HEAD。
+      await options.gitService.removeManagedWorktree({ worktreePath: params.workspacePath });
+    } catch (error) {
+      // 归档已持久化；清理失败不能把成功归档报告成失败，也不能强制删除用户数据。
+      logger.warn(undefined, "手动归档后托管工作树安全清理未执行", {
+        workspaceKey: resolveWorkspaceKey(params),
+        reason: error instanceof Error ? error.message : String(error),
       });
     }
   }
@@ -2992,6 +3026,7 @@ export function createZCodeTaskServiceAdapter(
       setOverlay(params, { archived: true });
       const meta = await updateIndexedTaskState(params, { archived: true });
       emitWorkspaceTaskListChanged(params, meta, "task_archived");
+      await cleanupArchivedManagedWorktree(params);
       return meta;
     },
 
