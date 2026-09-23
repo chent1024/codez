@@ -1,8 +1,11 @@
 # codez-app-identity Specification
 
 ## Purpose
+
 让 CodeZ 与官方 ZCode 在桌面系统和本机数据上明确区分，使用户可以并排安装、分别启动两款应用，并使各自的默认工作区和设置互不覆盖。
+
 ## Requirements
+
 ### Requirement: Distinct desktop identity
 
 桌面应用 SHALL 显示名称 CodeZ，使用与现有 ZCode 标识反向的应用图标，并使用独立的安装身份、协议身份及系统显示身份。
@@ -11,6 +14,11 @@
 
 - **WHEN** 用户已安装官方 ZCode 再安装 CodeZ
 - **THEN** 两个应用各自出现在系统应用列表和 Dock/任务栏，互不覆盖
+
+#### Scenario: Startup icon matches desktop identity
+
+- **WHEN** CodeZ 展示 HTML 启动壳或 React 加载态
+- **THEN** 启动画面使用与桌面应用图标同向的反向 Z 标识
 
 ### Requirement: Distinct default data and workspace
 
