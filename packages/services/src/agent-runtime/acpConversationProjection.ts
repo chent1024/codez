@@ -371,6 +371,12 @@ export class AcpConversationProjection {
     this.advance();
   }
 
+  setTitle(title: string): void {
+    if (this.title === title) return;
+    this.title = title;
+    this.advance();
+  }
+
   markUnavailable(reason: string): void {
     this.phase = "error";
     this.unavailableReason = reason;

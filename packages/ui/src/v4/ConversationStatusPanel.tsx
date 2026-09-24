@@ -112,6 +112,8 @@ interface ConversationStatusPanelProps {
   goal?: GoalState | null;
   sessionPlans?: readonly ToolCallRow[];
   plan?: PlanState | null;
+  /** ACP 回合已收口，但 Agent 未把计划的进行中步骤更新为终态。 */
+  planUnconfirmed?: boolean;
   backgroundWorks?: readonly BackgroundWorkSummary[];
   runningSubagents?: readonly ZCodeSessionRunningSubagent[];
   /** 本会话 `snapshot.workflowRuns.runs`；与 backgroundWorks 在模型层按 workId ≡ runId 联接。 */
@@ -870,10 +872,12 @@ function buildSessionPlanOpenRequest(
 
 function PlanStatusSection({
   model,
+  planUnconfirmed,
   popoverSide,
   separated,
 }: {
   model: ConversationStatusPanelModel;
+  planUnconfirmed: boolean;
   popoverSide: "bottom" | "left";
   separated: boolean;
 }) {
@@ -888,13 +892,20 @@ function PlanStatusSection({
       separated={separated}
       title={intl.formatMessage({ id: "chat.statusPanel.todo" })}
       trailing={() => (
-        <span
-          className={cn(
-            "tabular-nums",
-            isCompleted ? "text-[var(--color-success)]" : "text-[var(--color-foreground-subtle)]",
-          )}
-        >
-          {plan.completedCount}/{plan.totalCount}
+        <span className="flex items-center gap-2">
+          {planUnconfirmed ? (
+            <span className="text-[var(--color-foreground-subtle)]">
+              {intl.formatMessage({ id: "chat.statusPanel.planUnconfirmed" })}
+            </span>
+          ) : null}
+          <span
+            className={cn(
+              "tabular-nums",
+              isCompleted ? "text-[var(--color-success)]" : "text-[var(--color-foreground-subtle)]",
+            )}
+          >
+            {plan.completedCount}/{plan.totalCount}
+          </span>
         </span>
       )}
     >
@@ -1561,18 +1572,20 @@ function StatusSummaryRow({
   endedWorkflowRunCount,
   gitWorktreeChangeSummary,
   model,
+  planUnconfirmed,
   onVariantChange,
 }: {
   /** 已结束 run 的目录计数；宿主给 0 表示目录入口不可渲染（缺会话或缺回调）。 */
   endedWorkflowRunCount: number;
   gitWorktreeChangeSummary?: { added: number; removed: number } | null;
   model: ConversationStatusPanelModel;
+  planUnconfirmed: boolean;
   onVariantChange?: (variant: ChatViewSummaryPanelVariant | null) => void;
 }) {
   const { intl } = useZCodeIntl();
   const expandLabel = intl.formatMessage({ id: "chat.summaryPanel.showPanel" });
-  const currentPlanItem = getCurrentPlanItem(model.plan);
-  const completedPlanItem = getCompletedPlanItem(model.plan);
+  const currentPlanItem = planUnconfirmed ? null : getCurrentPlanItem(model.plan);
+  const completedPlanItem = planUnconfirmed ? null : getCompletedPlanItem(model.plan);
   const latestSessionPlan = model.sessionPlans?.items[0] ?? null;
   const goal = model.goal;
   const goalTitle = goal ? goal.summaryTitle?.trim() || goal.objective.trim() || null : null;
@@ -1641,7 +1654,9 @@ function StatusSummaryRow({
       icon={<ListChecksIcon className="size-4 text-[var(--color-foreground-subtle)]" />}
     >
       <span className="min-w-0 truncate">
-        {intl.formatMessage({ id: "chat.statusPanel.todo" })}
+        {intl.formatMessage({
+          id: planUnconfirmed ? "chat.statusPanel.planUnconfirmed" : "chat.statusPanel.todo",
+        })}
       </span>
       <span className="shrink-0 text-[var(--color-foreground-subtle)]">
         {model.plan.completedCount}/{model.plan.totalCount}
@@ -1714,6 +1729,7 @@ function ConversationStatusPanelImpl({
   goal,
   sessionPlans,
   plan,
+  planUnconfirmed = false,
   backgroundWorks = EMPTY_BACKGROUND_WORKS,
   runningSubagents = EMPTY_RUNNING_SUBAGENTS,
   workflowRuns = EMPTY_WORKFLOW_RUNS,
@@ -1996,6 +2012,7 @@ function ConversationStatusPanelImpl({
             {canRenderPlan ? (
               <PlanStatusSection
                 model={model}
+                planUnconfirmed={planUnconfirmed}
                 popoverSide={useVerticalFloatingPanels ? "bottom" : "left"}
                 separated={canRenderGit || canRenderGoal || canRenderSessionPlans}
               />
@@ -2070,6 +2087,7 @@ function ConversationStatusPanelImpl({
         >
           <StatusSummaryRow
             model={model}
+            planUnconfirmed={planUnconfirmed}
             // 与页脚同一道门（canRenderEndedWorkflows）：缺会话或缺回调时目录打不开，
             // 胶囊也就不该报一个点了没反应的数。
             endedWorkflowRunCount={canRenderEndedWorkflows ? endedWorkflowRunCount : 0}

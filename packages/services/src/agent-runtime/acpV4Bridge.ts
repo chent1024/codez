@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRuntimeId } from "@zcode/shared";
+import type { ZCodeTaskMeta } from "@zcode/shared";
 import {
   commandPayloadSchemas,
   conversationTopic,
@@ -43,7 +44,7 @@ export class AcpV4Bridge {
       frame: ConversationTopicWireCandidate,
     ) => void,
     isMemoryEnabled: () => boolean | Promise<boolean>,
-    private readonly onTaskChanged?: (target: AcpWorkspaceTarget) => void,
+    private readonly onTaskChanged?: (meta: ZCodeTaskMeta) => void,
   ) {
     this.coordinator = new AcpRuntimeCoordinator(
       taskIndex,
@@ -54,7 +55,10 @@ export class AcpV4Bridge {
           const state = `${snapshot.control.phase}\0${snapshot.meta.title}`;
           if (this.lastTaskState.get(key) !== state) {
             this.lastTaskState.set(key, state);
-            this.onTaskChanged?.(target);
+            // 恢复旧会话时磁盘状态可能残留 running；只有当前投影实际运行才广播实时状态。
+            if (snapshot.control.phase === "running" || target.status !== "running") {
+              this.onTaskChanged?.(target);
+            }
           }
         },
         // pending interaction 已投影到 V4；具体选项由 resolveInteraction 回传。

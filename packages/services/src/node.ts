@@ -14,6 +14,7 @@ import {
   buildLocalMediaPreviewUrl,
   isProviderProvisioningAccountCredentialKey,
   type ProviderProvisioningTrigger,
+  type ZCodeTaskMeta,
 } from "@zcode/shared";
 
 export {
@@ -2074,13 +2075,10 @@ export function createLocalServices(options: {
           resolveOffPeakClientConfig: () => codingPlanSubscriptionService.getOffPeakClientConfig(),
           resolveOffPeakTaskService: () => offPeakTaskServiceForAgent,
         };
-  let announceAcpTaskChanged: (target: {
-    workspacePath: string;
-    workspaceIdentity?: string;
-  }) => void = () => {};
+  let announceAcpTaskChanged: (meta: ZCodeTaskMeta) => void = () => {};
   const zcodeAgentService = createZCodeAgentService({
     resolveAcpMemoryEnabled: async () => (await settingService.get()).memoryEnabled === true,
-    onAcpTaskChanged: (target) => announceAcpTaskChanged(target),
+    onAcpTaskChanged: (meta) => announceAcpTaskChanged(meta),
     ...(agentAccountProviderConfigSource
       ? { accountProviderConfigSource: agentAccountProviderConfigSource }
       : {}),
@@ -2280,8 +2278,8 @@ export function createLocalServices(options: {
     agentService: zcodeAgentService,
     taskIndexRepo,
   });
-  announceAcpTaskChanged = (target) =>
-    zcodeTaskIndexSyncer.emitWorkspaceTaskListChanged(target, undefined, "task_meta_changed");
+  announceAcpTaskChanged = (meta) =>
+    zcodeTaskIndexSyncer.emitWorkspaceTaskListChanged(meta, meta, "task_status_changed");
   // The plugin can be toggled at runtime. Do not let a previously created resolver continue
   // health-checking/restarting Helper after disable, and create it lazily after enable.
   // 动态 resolver：isPluginEnabled 与 helper 创建用同一个 isCuaEnabledForContext 门控（dev mode 一致），

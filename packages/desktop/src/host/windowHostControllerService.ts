@@ -155,6 +155,9 @@ export function createWindowHostControllerRuntime(options: {
   >();
   const sourceRefreshGenerations = new Map<string, number>();
   const sourceLiveOverlays = new Map<string, WindowHostControllerSessionOverlay[]>();
+  // ACP 不经过 CLI sessions-index；只采信本次 Host 收到的运行事件，避免把磁盘中
+  // 上次崩溃残留的 running 状态重新解释为当前转圈。
+  const sourceAcpLiveOverlays = new Map<string, Map<string, WindowHostControllerSessionOverlay>>();
   const sourceSessionObservers = new Map<
     string,
     { agentService: IZCodeAgentService; observer: WindowHostSessionsIndexObserver }
@@ -172,6 +175,7 @@ export function createWindowHostControllerRuntime(options: {
     sourceSessionObservers.get(key)?.observer.dispose();
     sourceSessionObservers.delete(key);
     sourceLiveOverlays.delete(key);
+    sourceAcpLiveOverlays.delete(key);
     sourceRefreshGenerations.set(key, (sourceRefreshGenerations.get(key) ?? 0) + 1);
     sourceRefreshFlights.delete(key);
   }
@@ -186,6 +190,7 @@ export function createWindowHostControllerRuntime(options: {
     if (!resolved.agentService) {
       sourceSessionObservers.get(key)?.observer.dispose();
       sourceSessionObservers.delete(key);
+      sourceAcpLiveOverlays.delete(key);
       if (sourceLiveOverlays.delete(key)) {
         projection.replaceSourceSessionOverlays(resolved.scope, []);
       }
@@ -194,6 +199,7 @@ export function createWindowHostControllerRuntime(options: {
     const current = sourceSessionObservers.get(key);
     if (current?.agentService === resolved.agentService) return current.observer;
     current?.observer.dispose();
+    if (current) sourceAcpLiveOverlays.delete(key);
     if (sourceLiveOverlays.delete(key)) {
       projection.replaceSourceSessionOverlays(resolved.scope, []);
     }
@@ -210,7 +216,10 @@ export function createWindowHostControllerRuntime(options: {
         if (sourceSessionObservers.get(key)?.observer !== observer) return;
         const overlays = sessions.map(sessionOverlay);
         sourceLiveOverlays.set(key, overlays);
-        projection.replaceSourceSessionOverlays(resolved.scope, overlays);
+        projection.replaceSourceSessionOverlays(resolved.scope, [
+          ...overlays,
+          ...(sourceAcpLiveOverlays.get(key)?.values() ?? []),
+        ]);
       },
       onError: (error) => options.onSourceError?.(resolved.scope, "refresh", error),
     });
@@ -322,7 +331,36 @@ export function createWindowHostControllerRuntime(options: {
           ...(resolved.scope.workspaceIdentity
             ? { workspaceIdentity: resolved.scope.workspaceIdentity }
             : {}),
-        })(() => {
+        })((event) => {
+          if (
+            event.type === "workspace_task_list_changed" &&
+            event.taskMeta?.runtimeId &&
+            event.taskMeta.runtimeId !== "zcode-cli" &&
+            event.reason === "task_status_changed"
+          ) {
+            const meta = event.taskMeta;
+            const overlays = sourceAcpLiveOverlays.get(key) ?? new Map();
+            if (meta.status === "running") {
+              overlays.set(meta.taskId, {
+                taskId: meta.taskId,
+                liveStatus: "running",
+                title: meta.title,
+                updatedAt: meta.updatedAt,
+                activity: {
+                  phase: "running",
+                  lastActivityAt: meta.updatedAt,
+                  hasBackgroundWork: false,
+                },
+              });
+            } else {
+              overlays.delete(meta.taskId);
+            }
+            sourceAcpLiveOverlays.set(key, overlays);
+            projection.replaceSourceSessionOverlays(resolved.scope, [
+              ...(sourceLiveOverlays.get(key) ?? []),
+              ...overlays.values(),
+            ]);
+          }
           // workspace event 可能在列表首轮 refresh 读取途中到达；直接复用
           // single-flight 会把事件吞掉。先等在途读取结束，再把多个事件合并成下一轮 refresh。
           const inFlight = sourceRefreshFlights.get(key)?.promise;
@@ -337,6 +375,7 @@ export function createWindowHostControllerRuntime(options: {
     if (resolved.sourceAvailability === "offline" && previousAvailability === "online") {
       sourceSessionObservers.get(key)?.observer.dispose();
       sourceSessionObservers.delete(key);
+      sourceAcpLiveOverlays.delete(key);
       sourceSnapshotTaskServices.delete(key);
       projection.disconnectSource(resolved.scope);
     }
@@ -414,7 +453,10 @@ export function createWindowHostControllerRuntime(options: {
         ...(previousScope ? { replacesScope: previousScope } : {}),
         taskIndex,
         // live facts 仅驻 Host 内存；observer 使用 existing-only，列表读取不会启动 Agent。
-        sessionsIndex: sourceLiveOverlays.get(key) ?? [],
+        sessionsIndex: [
+          ...(sourceLiveOverlays.get(key) ?? []),
+          ...(sourceAcpLiveOverlays.get(key)?.values() ?? []),
+        ],
       });
       if (previousScope) {
         forgetRegisteredSource(previousScope);
@@ -753,6 +795,7 @@ export function createWindowHostControllerRuntime(options: {
       sourceRefreshFlights.delete(key);
       sourceSessionObservers.get(key)?.observer.dispose();
       sourceSessionObservers.delete(key);
+      sourceAcpLiveOverlays.delete(key);
       sourceSnapshotTaskServices.delete(key);
       projection.disconnectSource(scope);
     },
@@ -795,6 +838,7 @@ export function createWindowHostControllerRuntime(options: {
       for (const entry of sourceSessionObservers.values()) entry.observer.dispose();
       sourceSessionObservers.clear();
       sourceLiveOverlays.clear();
+      sourceAcpLiveOverlays.clear();
       pendingReplacementByNextSourceKey.clear();
     },
   };

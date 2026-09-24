@@ -4227,6 +4227,7 @@ const zhCN: Record<string, string> = {
   "chat.statusPanel.planFallback": "计划",
   "chat.statusPanel.openPlan": "打开计划：{title}",
   "chat.statusPanel.todo": "进程",
+  "chat.statusPanel.planUnconfirmed": "计划未更新",
   "chat.statusPanel.todoCompletedExpanded": "收起 {count} 项已完成",
   "chat.statusPanel.todoCompletedFold": "已完成 {count} 项",
   "chat.statusPanel.todoEarlierFold": "前面 {count} 项",

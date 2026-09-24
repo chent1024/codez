@@ -140,7 +140,8 @@ function SummaryContent({
   return (
     <div
       className={cn(
-        "tool-summary-content min-w-0 flex max-w-full items-center gap-2 text-foreground-subtlest",
+        // 长命令折叠后只显示一行；缺少 nowrap 时文本虽被裁掉，行盒仍会撑高整段对话。
+        "tool-summary-content min-w-0 flex max-w-full items-center gap-2 truncate text-foreground-subtlest",
         prioritizePrimaryText && "flex-1 overflow-hidden",
       )}
     >

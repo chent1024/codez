@@ -45,6 +45,7 @@ import {
   useWorkspaceSessionsIndexItems,
 } from "@/v4/useWorkspaceSessionsIndexItems.js";
 import { resolveWorkspaceTaskVisibleLimit } from "@/lib/workspaceTaskPagination.js";
+import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 
 interface WorkspaceTaskListQueryConfig {
   scope: {
@@ -396,6 +397,21 @@ export function useWorkspaceTaskLists(params: {
   );
   const { items: sessionsIndexItems, sourceRevisionByScopeKey } =
     useWorkspaceSessionsIndexItems(sessionsIndexScopes);
+  const [acpLiveItemsByKey, setAcpLiveItemsByKey] = useState<ReadonlyMap<string, ZCodeTaskMeta>>(
+    () => new Map(),
+  );
+  const liveSessionItems = useMemo(
+    () => [...sessionsIndexItems, ...acpLiveItemsByKey.values()],
+    [sessionsIndexItems, acpLiveItemsByKey],
+  );
+  const acpLiveRevision = useMemo(
+    () =>
+      [...acpLiveItemsByKey.values()]
+        .map((item) => `${buildTaskEntityKey(item)}:${item.status}:${item.updatedAt}`)
+        .sort()
+        .join("|"),
+    [acpLiveItemsByKey],
+  );
   // pin/archive 归属版本：mutation（本端乐观或它端事件）后 bump，驱动权威 re-filter。
   const membershipVersion = useTaskListMembershipVersion();
   const [loading, setLoading] = useState<Record<string, boolean>>({});
@@ -425,11 +441,11 @@ export function useWorkspaceTaskLists(params: {
               : {}),
             ...(config.remoteSessionId ? { endpointKey: config.remoteSessionId } : {}),
           });
-          return `${sourceKey}=${sourceRevisionByScopeKey[sourceKey] ?? "missing"}`;
+          return `${sourceKey}=${sourceRevisionByScopeKey[sourceKey] ?? "missing"}:acp=${acpLiveRevision}`;
         })
         .sort()
         .join("|"),
-    [pendingConfigs, sourceRevisionByScopeKey],
+    [acpLiveRevision, pendingConfigs, sourceRevisionByScopeKey],
   );
   const requestSignature = useMemo(
     () =>
@@ -492,7 +508,7 @@ export function useWorkspaceTaskLists(params: {
       membershipVersion,
     };
     inFlightRequestRef.current = flight;
-    const sessionsForRequest = sessionsIndexItems;
+    const sessionsForRequest = liveSessionItems;
     const expectedInvalidationVersionByQueryKey = new Map(
       pendingConfigs.map((config) => [
         config.queryKey,
@@ -606,7 +622,7 @@ export function useWorkspaceTaskLists(params: {
     params.sortBy,
     requestSignature,
     resultsByQueryKey,
-    sessionsIndexItems,
+    liveSessionItems,
     sessionsIndexRevision,
     setQueryResults,
   ]);
@@ -631,13 +647,13 @@ export function useWorkspaceTaskLists(params: {
       return;
     }
     const last = lastSessionsRefreshRef.current;
-    if (last && last.items === sessionsIndexItems && last.membershipVersion === membershipVersion) {
+    if (last && last.items === liveSessionItems && last.membershipVersion === membershipVersion) {
       return;
     }
     const membershipChanged = !last || last.membershipVersion !== membershipVersion;
     const previousItems = last?.items ?? null;
     lastSessionsRefreshRef.current = {
-      items: sessionsIndexItems,
+      items: liveSessionItems,
       membershipVersion,
     };
     if (membershipChanged || previousItems === null) {
@@ -648,7 +664,7 @@ export function useWorkspaceTaskLists(params: {
     // 之前任一帧到达都把所有 workspace 的行缓存整体打成 stale 重查，
     // 表现为"打开/收口一个任务，左侧所有 workspace 列表一起重新加载"。
     // 这里 diff 出真正有变化的 workspace，只标脏对应 scope。
-    const changedWorkspaceKeys = diffChangedWorkspaceKeys(previousItems, sessionsIndexItems);
+    const changedWorkspaceKeys = diffChangedWorkspaceKeys(previousItems, liveSessionItems);
     if (changedWorkspaceKeys.size === 0) {
       return;
     }
@@ -658,7 +674,7 @@ export function useWorkspaceTaskLists(params: {
     if (changedScopes.length > 0) {
       markTaskQueryCacheScopesStale(changedScopes);
     }
-  }, [sessionsIndexItems, membershipVersion, sessionsIndexScopes]);
+  }, [liveSessionItems, membershipVersion, sessionsIndexScopes]);
 
   useEffect(() => {
     const subscribedEndpointShards = endpointShardsRef.current;
@@ -694,6 +710,29 @@ export function useWorkspaceTaskLists(params: {
             event,
             service: shard.services.zcodeTaskService,
           });
+          if (
+            event.taskMeta?.runtimeId &&
+            event.taskMeta.runtimeId !== "zcode-cli" &&
+            event.reason === "task_status_changed"
+          ) {
+            const meta = event.taskMeta;
+            setAcpLiveItemsByKey((current) => {
+              const next = new Map(current);
+              if (meta.status === "running") {
+                next.set(
+                  buildTaskEntityKey(meta),
+                  attachTaskListRowActivity(meta, {
+                    phase: "running",
+                    lastActivityAt: meta.updatedAt,
+                    hasBackgroundWork: false,
+                  }),
+                );
+              } else {
+                next.delete(buildTaskEntityKey(meta));
+              }
+              return next;
+            });
+          }
           if (!shouldRefetchTaskListMembershipForWorkspaceEvent(event)) {
             return;
           }

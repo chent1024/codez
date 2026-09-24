@@ -113,6 +113,7 @@ import {
   type ZCodeToolExecResource,
   type ZCodePluginOperationProgressNotification,
   type ZCodeTaskMode,
+  type ZCodeTaskMeta,
 } from "@zcode/shared";
 import { createServiceLogger } from "#src/logger/serviceLogger.js";
 import { createOfficialMcpIssuanceAudit } from "#src/official-mcp/officialMcpIssuanceAudit.js";
@@ -877,7 +878,7 @@ interface CreateZCodeAgentServiceOptions extends Omit<
     scope: ZCodeSessionRuntimePreferencesScope,
   ) => Promise<ZCodeSessionRuntimePreferencesResult>;
   resolveAcpMemoryEnabled?: () => Promise<boolean>;
-  onAcpTaskChanged?: (target: ZCodeAgentWorkspaceTarget) => void;
+  onAcpTaskChanged?: (meta: ZCodeTaskMeta) => void;
   /** manual run 落库后由当前 host 直接派发；返回时 prompt 必须已被 session 接受。 */
   onAutomationManualRunRequested?: (params: {
     automation: ZCodeAutomation;
@@ -1141,7 +1142,7 @@ export function createZCodeAgentService(
     automationTaskIndexRepo,
     (target, frame) => getConversationFrameEmitter(target).fire(frame),
     () => options?.resolveAcpMemoryEnabled?.() ?? false,
-    (target) => options?.onAcpTaskChanged?.(target),
+    (meta) => options?.onAcpTaskChanged?.(meta),
   );
   const localTtftFactsEmitter = new Emitter<{ workspaceKey: string; facts: LocalTtftFacts }>();
   const conversationTelemetryFactEmitters = new Map<string, Emitter<ConversationTelemetryFact>>();

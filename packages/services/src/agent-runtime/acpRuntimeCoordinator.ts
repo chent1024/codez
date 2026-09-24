@@ -18,6 +18,7 @@ import type { TaskIndexRepo } from "#src/session/taskIndexRepo.js";
 import { AcpConnection } from "#src/agent-runtime/acpConnection.js";
 import { AcpConversationProjection } from "#src/agent-runtime/acpConversationProjection.js";
 import { AcpTranscriptStore } from "#src/agent-runtime/acpTranscriptStore.js";
+import { deriveSessionTitle } from "#src/session/sessionTitle.js";
 import { createAcpManagedSession } from "#src/agent-runtime/acpSessionCreation.js";
 import { prepareAcpPromptAttachments } from "#src/agent-runtime/acpPromptAttachments.js";
 import {
@@ -41,10 +42,7 @@ export interface AcpWorkspaceTarget {
 }
 
 export interface AcpRuntimeCoordinatorEvents {
-  onSnapshot?(
-    target: AcpWorkspaceTarget & { taskId: string },
-    snapshot: ConversationSnapshot,
-  ): void;
+  onSnapshot?(target: ZCodeTaskMeta, snapshot: ConversationSnapshot): void;
   onPermission?(
     target: AcpWorkspaceTarget & { taskId: string; interactionId: string },
     request: RequestPermissionRequest,
@@ -280,9 +278,21 @@ export class AcpRuntimeCoordinator {
     managed.projection.beginTurn(target.commandId, target.text, target.attachments);
     managed.activeCommandId = target.commandId;
     managed.turnSettled = false;
-    managed.meta = { ...managed.meta, updatedAt: Date.now(), status: "running" };
+    // ACP Agent 可以始终不发送 session_info_update；首轮接纳时用用户输入替换占位标题。
+    // task index 的 sync 会保留手动重命名，因此取其返回值作为投影的最终标题。
+    const firstInputTitle =
+      managed.meta.title === "New session" && !managed.meta.titleOverridden
+        ? deriveSessionTitle(target.text.trim(), []) || target.attachments?.[0]?.fileName
+        : undefined;
+    managed.meta = {
+      ...managed.meta,
+      ...(firstInputTitle ? { title: firstInputTitle } : {}),
+      updatedAt: Date.now(),
+      status: "running",
+    };
     try {
-      await this.taskIndex.syncTaskMeta({ meta: managed.meta });
+      managed.meta = await this.taskIndex.syncTaskMeta({ meta: managed.meta });
+      managed.projection.setTitle(managed.meta.title);
     } catch (error) {
       await this.finishTurn(managed, {
         error: "ACP prompt was not started because task state could not be saved",
@@ -481,7 +491,7 @@ export class AcpRuntimeCoordinator {
       pending,
       current,
       syncMeta: async (meta) => {
-        await this.taskIndex.syncTaskMeta({ meta });
+        return this.taskIndex.syncTaskMeta({ meta });
       },
       publish: (managed) => this.publish(managed),
       onPermission: this.events.onPermission

@@ -59,7 +59,7 @@ export function createAcpSessionObserver(input: {
   transcript: AcpTranscriptStore;
   pending: Map<string, PendingPermission>;
   current: () => ManagedAcpSession | null;
-  syncMeta: (meta: ZCodeTaskMeta) => Promise<void>;
+  syncMeta: (meta: ZCodeTaskMeta) => Promise<ZCodeTaskMeta>;
   publish: (managed: ManagedAcpSession) => void;
   onPermission?: (interactionId: string, request: RequestPermissionRequest) => void;
   finishCrashedTurn: (managed: ManagedAcpSession) => Promise<void>;
@@ -76,7 +76,8 @@ export function createAcpSessionObserver(input: {
         notification.update.title
       ) {
         managed.meta = { ...managed.meta, title: notification.update.title, updatedAt: Date.now() };
-        await input.syncMeta(managed.meta);
+        managed.meta = await input.syncMeta(managed.meta);
+        input.projection.setTitle(managed.meta.title);
       }
       if (notification.update.sessionUpdate === "config_option_update") {
         const models = managed.connection.modelOptions();
@@ -87,7 +88,7 @@ export function createAcpSessionObserver(input: {
         const thoughtLevel = levels.find((item) => item.selected)?.value;
         if (managed.meta.model !== model || managed.meta.thoughtLevel !== thoughtLevel) {
           managed.meta = { ...managed.meta, model, thoughtLevel, updatedAt: Date.now() };
-          await input.syncMeta(managed.meta);
+          managed.meta = await input.syncMeta(managed.meta);
         }
       }
       input.publish(managed);

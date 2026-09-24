@@ -1,8 +1,11 @@
 # acp-conversation Specification
 
 ## Purpose
+
 使 CodeZ 能作为 ACP v1 客户端运行外部 Agent CLI，并把会话事实可靠地呈现在现有桌面和远控界面。
+
 ## Requirements
+
 ### Requirement: ACP session lifecycle
 
 CodeZ SHALL 通过标准输入输出与 ACP Agent 完成版本和能力协商，再创建或按能力恢复会话，发送 prompt，接收有序 update，并允许取消。原生 sessionId SHALL 与工作台 taskId 区分保存。Agent 返回失败结果时，CodeZ SHALL 记录失败终态并在会话中展示可读错误，不得以成功空白结束。
@@ -26,6 +29,43 @@ CodeZ SHALL 通过标准输入输出与 ACP Agent 完成版本和能力协商，
 
 - **WHEN** Agent 以失败元数据或拒绝终态结束且未产生回复
 - **THEN** 会话以失败状态收口并展示经过安全处理的错误，不标为成功或自动重发
+
+### Requirement: ACP workbench title and live activity
+
+CodeZ SHALL 在首条 ACP 输入被接纳时为仍使用默认标题的会话生成可见标题；Agent 随后的有效标题更新和用户手动标题 SHALL 保持权威。侧栏 SHALL 根据当前 Host 中 ACP 会话的实时执行状态显示运行标识，并在回合结束、进程退出或 Host 重启后收口，不把上次持久化的 `running` 当作当前仍在运行。
+
+#### Scenario: Agent does not publish a title
+
+- **WHEN** ACP Agent 接纳首条输入但始终没有发送 `session_info_update`
+- **THEN** 会话标题由首条输入派生，侧栏和会话页显示相同标题
+
+#### Scenario: ACP work continues in the background
+
+- **WHEN** ACP 会话的 prompt 正在运行，用户离开该会话
+- **THEN** 侧栏仍显示该会话的运行标识；终态到达后标识消失
+
+#### Scenario: Restored task has stale running status
+
+- **WHEN** Host 重启后任务索引仍记录上次 ACP 回合的 `running`
+- **THEN** 侧栏不把该持久状态解释为实时运行
+
+### Requirement: ACP plan progress attribution
+
+CodeZ SHALL 按 ACP Agent 最后一次 `plan` 更新展示步骤和完成数。若回合已结束而最后一次计划仍有进行中步骤，工作台 SHALL 明确标出进度未由 Agent 更新，不得自行推断或宣称这些步骤已完成。新计划更新到来时 SHALL 清除旧提示并采用新状态。
+
+#### Scenario: Final answer without final plan update
+
+- **WHEN** ACP Agent 发出最终回复并结束回合，但最后一次计划仍有 `in_progress` 步骤
+- **THEN** 进度保持 Agent 报告的完成数，并提示该计划未更新
+
+### Requirement: Compact ACP tool summaries
+
+CodeZ SHALL 将收起的 ACP 工具摘要限制为单行高度。长命令文本 SHALL 在该行内截断，展开后的工具详情仍 SHALL 保留完整内容。
+
+#### Scenario: Long command in a collapsed tool row
+
+- **WHEN** ACP Agent 报告一条长于会话列宽的命令，工具详情处于收起状态
+- **THEN** 摘要仅占一行，后续思考和工具行按常规间距排列
 
 ### Requirement: Host callbacks and authorization
 

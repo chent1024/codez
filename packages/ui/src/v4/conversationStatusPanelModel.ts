@@ -3,6 +3,7 @@ import type {
   BackgroundWorkSummary,
   GoalState,
   PlanState,
+  SessionPhase,
   RunningSubagentSummary,
   ToolCallRow,
   WorkflowRunState,
@@ -27,6 +28,22 @@ export interface ConversationStatusPanelPlanModel {
   completedCount: number;
   waitingCount: number;
   totalCount: number;
+}
+
+/** ACP 的计划只由 Agent 更新；回合结束不代表最后一个 inProgress 已完成。 */
+export function isAcpPlanUnconfirmed(input: {
+  runtimeId?: string;
+  phase?: SessionPhase;
+  plan?: PlanState | null;
+}): boolean {
+  return (
+    Boolean(input.runtimeId && input.runtimeId !== "zcode-cli") &&
+    input.phase !== undefined &&
+    input.phase !== "draft" &&
+    input.phase !== "prewarming" &&
+    input.phase !== "running" &&
+    input.plan?.items.some((item) => item.status === "inProgress") === true
+  );
 }
 
 export interface ConversationStatusPanelSessionPlanItem {

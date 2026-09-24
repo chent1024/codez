@@ -172,6 +172,7 @@ import {
 } from "@/v4/conversationLayout.js";
 import {
   buildConversationStatusPanelModel,
+  isAcpPlanUnconfirmed,
   resolveSoleRunningWorkflowRunTarget,
 } from "@/v4/conversationStatusPanelModel.js";
 import type { ConversationStatusPanelWorkflowRunTarget } from "@/v4/conversationStatusPanelModel.js";
@@ -5036,6 +5037,11 @@ export function SessionPane({
             goal={selectionSideChat ? null : (snapshot?.goal ?? null)}
             sessionPlans={state.sessionPlans}
             plan={snapshot?.plan ?? null}
+            planUnconfirmed={isAcpPlanUnconfirmed({
+              runtimeId: snapshot?.meta.runtimeId,
+              phase: snapshot?.control.phase,
+              plan: snapshot?.plan,
+            })}
             backgroundWorks={snapshot?.backgroundWorks ?? []}
             runningSubagents={subagents.running}
             workflowRuns={snapshot?.workflowRuns?.runs ?? []}

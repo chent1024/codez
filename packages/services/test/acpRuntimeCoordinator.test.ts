@@ -34,6 +34,11 @@ for await (const line of input) {
   }
   if (request.method === 'session/prompt') {
     const blocks = request.params.prompt;
+    if (blocks.some((block) => block.type === 'text' && block.text === 'title-update')) {
+      process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{
+        sessionId:request.params.sessionId,update:{sessionUpdate:'session_info_update',title:'Agent title'}
+      }})+'\\n');
+    }
     const reply = blocks.some((block) => block.type === 'image') ? 'image-received'
       : blocks.some((block) => block.type === 'resource' && block.resource.text === 'local note') ? 'file-received' : 'reply';
     process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{
@@ -49,12 +54,13 @@ test("ACP coordinator binds workbench identity, deduplicates and restores V4 his
   const agentFile = join(dir, "agent.mjs");
   const repo = new TaskIndexRepo(join(dir, "tasks.sqlite"));
   setDataBaseDir(dir);
-  const snapshots: string[] = [];
+  const snapshots: Array<{ phase: string; status: string | undefined; title: string }> = [];
   const makeCoordinator = () =>
     new AcpRuntimeCoordinator(
       repo,
       {
-        onSnapshot: (_target, snapshot) => snapshots.push(snapshot.control.phase),
+        onSnapshot: (meta, snapshot) =>
+          snapshots.push({ phase: snapshot.control.phase, status: meta.status, title: meta.title }),
       },
       async () => ({ executable: process.execPath, args: [agentFile] }),
     );
@@ -118,6 +124,15 @@ test("ACP coordinator binds workbench identity, deduplicates and restores V4 his
       };
       poll();
     });
+    assert.equal((await repo.getTaskMeta(target))?.title, "hello");
+    await repo.updateTaskState({
+      ...target,
+      patch: { title: "Manual title", titleOverridden: true, updatedAt: Date.now() },
+    });
+    await coordinator.sendPrompt({ ...target, commandId: "prompt-2", text: "title-update" });
+    await waitForAcpCompletion(coordinator, target);
+    assert.equal((await repo.getTaskMeta(target))?.title, "Manual title");
+    assert.equal(coordinator.snapshot(target)?.meta.title, "Manual title");
     await coordinator.closeAll();
     coordinator = makeCoordinator();
     const restored = await coordinator.load(target);
@@ -131,7 +146,19 @@ test("ACP coordinator binds workbench identity, deduplicates and restores V4 his
       await coordinator.sendPrompt({ ...target, commandId: "prompt-1", text: "hello" }),
       "duplicate",
     );
-    assert.ok(snapshots.includes("running"));
+    assert.ok(
+      snapshots.some(
+        (snapshot) =>
+          snapshot.phase === "running" &&
+          snapshot.status === "running" &&
+          snapshot.title === "hello",
+      ),
+    );
+    assert.ok(
+      snapshots.some(
+        (snapshot) => snapshot.phase === "completedSuccess" && snapshot.status === "completed",
+      ),
+    );
     await coordinator.closeAll();
     const unavailable = new AcpRuntimeCoordinator(repo, {}, async () => {
       throw new Error("Agent executable is missing");
@@ -343,17 +370,28 @@ test("a configured ACP Agent absent from the built-in catalog can create and res
     assert.notEqual(restored.control.phase, "error");
 
     const frames: Array<{ kind: string; deliveryKind?: string }> = [];
+    await repo.updateTaskState({
+      ...target,
+      patch: { status: "running", updatedAt: Date.now() },
+    });
+    const liveTaskStatuses: Array<string | undefined> = [];
     const bridge = new AcpV4Bridge(
       repo,
       (_target, frame) => frames.push(frame),
       () => false,
+      (meta) => liveTaskStatuses.push(meta.status),
     );
     try {
       const subscribed = await bridge.subscribe(target);
+      assert.equal(liveTaskStatuses.includes("running"), false);
       assert.equal(frames.at(-1)?.deliveryKind, "initial");
       assert.equal(bridge.resync(subscribed.ack.subscriptionId)?.ack.mode, "snapshot");
       assert.equal(frames.at(-1)?.deliveryKind, "recovery");
       assert.equal((await repo.getTaskMeta(target))?.nativeSessionId, meta.nativeSessionId);
+      await bridge.coordinator.sendPrompt({ ...target, commandId: "event-prompt", text: "run" });
+      await waitForAcpCompletion(bridge.coordinator, target);
+      assert.ok(liveTaskStatuses.includes("running"));
+      assert.equal(liveTaskStatuses.at(-1), "completed");
     } finally {
       await bridge.dispose();
     }
