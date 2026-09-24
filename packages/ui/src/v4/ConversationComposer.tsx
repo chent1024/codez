@@ -56,6 +56,7 @@ import {
   InfoIcon,
   RotateCcwIcon,
   SquareIcon,
+  ShieldIcon,
   XIcon,
 } from "lucide-react";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
@@ -71,6 +72,13 @@ import {
   AttachmentPreview,
 } from "@/components/ai-elements/attachments.js";
 import { Button } from "@/components/ui/button.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu.js";
 import {
   Dialog,
   DialogClose,
@@ -372,6 +380,10 @@ interface ConversationComposerProps {
   /** 当前 Composer 是否能构造完整 Submission；空模型或空 Reasoning 时为 false。 */
   submissionReady?: boolean;
   agentRuntimeId?: AgentRuntimeId;
+  acpModes?: Array<{ id: string; name: string; description?: string }>;
+  acpSelectedMode?: string;
+  acpModeLoading?: boolean;
+  onSelectAcpMode?: (modeId: string) => void;
   createSubmissionFromComposer?: () => ComposerSubmissionConfig | null;
   /** 仅供发送埋点冻结模型维度；包含草稿初始化 config 与显式 intent 的合并值。 */
   telemetryDraftConfig?: Partial<SessionConfigState>;
@@ -494,6 +506,10 @@ function ConversationComposerImpl({
   replaceComposerDraft,
   submissionReady = true,
   agentRuntimeId = "zcode-cli",
+  acpModes = [],
+  acpSelectedMode = "",
+  acpModeLoading = false,
+  onSelectAcpMode,
   createSubmissionFromComposer,
   telemetryDraftConfig,
   contextHeader,
@@ -2288,7 +2304,36 @@ function ConversationComposerImpl({
           excludedSlashCommandNames={suppressGoalCommands ? ["goal"] : undefined}
           appSlashCommands={appSlashCommands}
           enableMentionPanel={agentRuntimeId === "zcode-cli"}
-          leadingActions={agentRuntimeId === "zcode-cli" ? leadingActionsNode : undefined}
+          leadingActions={
+            agentRuntimeId === "zcode-cli" ? (
+              leadingActionsNode
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={disabled || !draftMode || acpModeLoading || !acpModes.length}
+                    aria-label={intl.formatMessage({ id: "chat.toolbar.acpMode.label" })}
+                    title={intl.formatMessage({ id: acpModes.length ? "chat.toolbar.acpMode.label" : "chat.toolbar.acpMode.unavailable" })}
+                    className="h-7 gap-1 px-2 text-ui-base"
+                  >
+                    <ShieldIcon className="size-4" />
+                    {acpModes.find((mode) => mode.id === acpSelectedMode)?.name ?? intl.formatMessage({ id: "chat.toolbar.acpMode.placeholder" })}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" className="min-w-40">
+                  <DropdownMenuRadioGroup value={acpSelectedMode} onValueChange={onSelectAcpMode}>
+                    {acpModes.map((mode) => (
+                      <DropdownMenuRadioItem key={mode.id} value={mode.id} title={mode.description}>
+                        {mode.name}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )
+          }
           submitControl={submitControlNode}
           className="p-0"
           onChange={handleEditorChange}

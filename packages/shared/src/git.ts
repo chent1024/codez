@@ -147,16 +147,20 @@ export interface GitCreateBranchRequest extends GitRepositoryRequest {
 
 export interface GitCreateWorktreeRequest extends GitRepositoryRequest {
   startBranchName: string;
+  refreshUpstream?: boolean;
 }
 
 export interface GitCreateWorktreeResult {
   worktreePath: string;
   startCommitHash: string;
+  upstreamRefresh: "refreshed" | "local-upstream" | "no-upstream" | "disabled";
 }
 
 export interface GitManagedWorktree {
   worktreePath: string;
   sourceRepoRoot: string;
+  createdFromCommitHash?: string;
+  upstreamRefresh?: GitCreateWorktreeResult["upstreamRefresh"];
   headCommitHash: string;
   branchName: string | null;
   isDirty: boolean;

@@ -125,6 +125,8 @@ export class AcpV4Bridge {
         runtimeId: payload.runtimeId as AgentRuntimeId,
         modelId: payload.acpConfig?.modelId,
         thoughtLevel: payload.acpConfig?.thoughtLevel,
+        modeId: payload.acpConfig?.modeId,
+        projectWorkspacePath: payload.projectWorkspacePath,
       });
       if (payload.firstInput) {
         await this.coordinator.sendPrompt({

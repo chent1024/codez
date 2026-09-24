@@ -92,6 +92,7 @@ export interface GitCliRepo {
     workspacePath: string,
     startBranchName: string,
     managedRootPath?: string,
+    refreshUpstream?: boolean,
   ): Promise<GitCreateWorktreeResult>;
   listManagedWorktrees(managedRootPath?: string): Promise<GitManagedWorktreeListResult>;
   removeManagedWorktree(worktreePath: string, managedRootPath?: string): Promise<void>;

@@ -13,6 +13,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog.js";
 import { Button } from "@/components/ui/button.js";
+import { Switch } from "@/components/ui/switch.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useSettings } from "@/hooks/useSettingService.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -154,6 +155,22 @@ export function WorktreeSettingsSection({
             </Button>
           </div>
         </div>
+      </SettingsGroupCard>
+
+      <SettingsGroupCard>
+        <SettingsRow
+          label={intl.formatMessage({ id: "settings.worktrees.fetchUpstream" })}
+          description={intl.formatMessage({ id: "settings.worktrees.fetchUpstreamDescription" })}
+          control={
+            <Switch
+              aria-label={intl.formatMessage({ id: "settings.worktrees.fetchUpstream" })}
+              checked={settings?.worktreeFetchUpstreamBeforeCreate ?? true}
+              onCheckedChange={(checked) => {
+                void update({ worktreeFetchUpstreamBeforeCreate: checked });
+              }}
+            />
+          }
+        />
       </SettingsGroupCard>
 
       {error ? (

@@ -1193,9 +1193,13 @@ export const WorkspaceShellLayout = memo(function WorkspaceShellLayoutComponent(
   const handleWorktreeSessionCreated = useCallback(
     (worktreePath: string, sessionId: string) => {
       setWorktreeSelection(null);
+      const projectWorkspacePath =
+        workspaceTabs.find((tab) => tab.workspacePath === workspaceAbsPath)?.projectWorkspacePath ??
+        workspaceAbsPath;
+      tabStoreApi.getState().ensureWorkspaceTab(worktreePath, { projectWorkspacePath });
       handleSelectTaskInChat(worktreePath, sessionId);
     },
-    [handleSelectTaskInChat],
+    [handleSelectTaskInChat, tabStoreApi, workspaceAbsPath, workspaceTabs],
   );
   const draftComposerHeader = useMemo(
     () => (

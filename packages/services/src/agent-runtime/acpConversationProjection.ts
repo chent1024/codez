@@ -6,6 +6,7 @@ import type {
   PromptResponse,
   ToolCallStatus,
   RequestPermissionRequest,
+  SessionModeState,
 } from "@agentclientprotocol/sdk";
 import {
   type ConversationRow,
@@ -24,6 +25,7 @@ export class AcpConversationProjection {
   private readonly rows: ConversationRow[] = [];
   private readonly rowByMessageId = new Map<string, number>();
   private readonly rowByToolCallId = new Map<string, number>();
+  private readonly reasoningStartedAt = new Map<number, number>();
   private anonymousChunkRow: { kind: "assistantText" | "reasoning"; rowId: number } | null = null;
   private nextRowId = 0;
   private seq = 0;
@@ -37,7 +39,15 @@ export class AcpConversationProjection {
   private thought = "";
   private model = "";
   private modelOptions: Array<{ id: string; name: string }> = [];
+  private modes: SessionModeState | null = null;
   private unavailableReason: string | null = null;
+  private lastError: {
+    code: string;
+    message: string;
+    recoverable: boolean;
+    at: number;
+    source: "runtime";
+  } | null = null;
 
   constructor(
     readonly taskId: string,
@@ -77,24 +87,29 @@ export class AcpConversationProjection {
             return [];
           }
         });
-        this.beginTurn(entry.commandId, text, attachments);
+        this.beginTurn(entry.commandId, text, attachments, entry.at);
       } else if (entry.kind === "update") {
-        this.applyUpdate({ sessionId: this.taskId, update: entry.update });
+        this.applyUpdate({ sessionId: this.taskId, update: entry.update }, entry.at);
       } else {
-        this.finishTurn(entry.result);
+        this.finishTurn(entry.result, entry.at);
       }
     }
     if (this.activeTurnId)
       this.finishTurn({ error: "ACP turn outcome is unknown after process exit" });
   }
 
-  beginTurn(commandId: string, text: string, attachments?: readonly AttachmentRef[]): void {
+  beginTurn(
+    commandId: string,
+    text: string,
+    attachments?: readonly AttachmentRef[],
+    at = Date.now(),
+  ): void {
     if (this.activeTurnId) throw new Error("ACP projection already has an active turn");
     this.anonymousChunkRow = null;
     const turnId = randomUUID();
-    const at = Date.now();
     this.activeTurnId = turnId;
     this.phase = "running";
+    this.lastError = null;
     const header = this.pushRow({
       kind: "turnHeader",
       turnId,
@@ -115,13 +130,14 @@ export class AcpConversationProjection {
     });
   }
 
-  applyUpdate(notification: SessionNotification): void {
+  applyUpdate(notification: SessionNotification, at = Date.now()): void {
     if (!this.activeTurnId) return;
     const update = notification.update;
     if (
       update.sessionUpdate === "agent_message_chunk" ||
       update.sessionUpdate === "agent_thought_chunk"
     ) {
+      if (update.sessionUpdate === "agent_message_chunk") this.completeReasoning(at);
       if (update.content.type !== "text") return;
       const kind = update.sessionUpdate === "agent_message_chunk" ? "assistantText" : "reasoning";
       const key = update.messageId ? `${kind}:${update.messageId}` : null;
@@ -156,15 +172,20 @@ export class AcpConversationProjection {
               });
         if (key) this.rowByMessageId.set(key, row.rowId);
         else this.anonymousChunkRow = { kind, rowId: row.rowId };
+        if (kind === "reasoning") this.reasoningStartedAt.set(row.rowId, at);
       }
       if (key) this.anonymousChunkRow = null;
     } else if (update.sessionUpdate === "session_info_update" && update.title) {
       this.title = update.title;
       this.advance();
+    } else if (update.sessionUpdate === "current_mode_update" && this.modes) {
+      this.modes = { ...this.modes, currentModeId: update.currentModeId };
+      this.advance();
     } else if (
       update.sessionUpdate === "tool_call" ||
       update.sessionUpdate === "tool_call_update"
     ) {
+      this.completeReasoning(at);
       const status = mapToolStatus(update.status);
       const existingRowId = this.rowByToolCallId.get(update.toolCallId);
       const index =
@@ -217,6 +238,7 @@ export class AcpConversationProjection {
         this.rowByToolCallId.set(update.toolCallId, row.rowId);
       }
     } else if (update.sessionUpdate === "plan") {
+      this.completeReasoning(at);
       this.plan = {
         items: update.entries.map((entry, index) => ({
           id: `acp-${index}`,
@@ -236,11 +258,21 @@ export class AcpConversationProjection {
     }
   }
 
-  finishTurn(result: PromptResponse | { error: string }): void {
+  finishTurn(result: PromptResponse | { error: string }, endedAt = Date.now()): void {
     if (!this.activeTurnId) return;
-    const endedAt = Date.now();
-    const failed = "error" in result;
-    const cancelled = !failed && result.stopReason === "cancelled";
+    const failure = acpPromptFailure(result);
+    const failed = failure !== null;
+    const cancelled = !failed && "stopReason" in result && result.stopReason === "cancelled";
+    this.completeReasoning(endedAt, cancelled || failed);
+    this.lastError = failure
+      ? {
+          code: "acpPromptFailed",
+          message: failure,
+          recoverable: true,
+          at: endedAt,
+          source: "runtime",
+        }
+      : null;
     this.phase = failed ? "error" : cancelled ? "completedInterrupted" : "completedSuccess";
     for (let index = 0; index < this.rows.length; index++) {
       const row = this.rows[index]!;
@@ -256,8 +288,6 @@ export class AcpConversationProjection {
           ...row,
           state: failed ? "failed" : cancelled ? "interrupted" : "complete",
         };
-      } else if (row.kind === "reasoning" && row.state === "streaming") {
-        this.rows[index] = { ...row, state: cancelled || failed ? "interrupted" : "complete" };
       } else if (
         row.kind === "toolCall" &&
         row.status !== "success" &&
@@ -282,6 +312,7 @@ export class AcpConversationProjection {
     this.activeTurnId = null;
     this.activeTurnHeaderRowId = null;
     this.rowByMessageId.clear();
+    this.reasoningStartedAt.clear();
     this.rowByToolCallId.clear();
     this.anonymousChunkRow = null;
     this.permissions.clear();
@@ -335,6 +366,11 @@ export class AcpConversationProjection {
     this.advance();
   }
 
+  setModes(modes: SessionModeState | null): void {
+    this.modes = modes;
+    this.advance();
+  }
+
   markUnavailable(reason: string): void {
     this.phase = "error";
     this.unavailableReason = reason;
@@ -354,10 +390,12 @@ export class AcpConversationProjection {
       thought: this.thought,
       thoughtLevels: this.thoughtLevels,
       modelOptions: this.modelOptions,
+      modes: this.modes,
       permissions: [...this.permissions.values()],
       plan: this.plan,
       rows: this.rows,
       unavailableReason: this.unavailableReason,
+      lastError: this.lastError,
     });
   }
 
@@ -428,6 +466,60 @@ export class AcpConversationProjection {
     this.seq++;
     this.revision++;
   }
+
+  private completeReasoning(at: number, interrupted = false): void {
+    for (let index = 0; index < this.rows.length; index++) {
+      const row = this.rows[index];
+      if (
+        row?.kind !== "reasoning" ||
+        row.turnId !== this.activeTurnId ||
+        row.state !== "streaming"
+      )
+        continue;
+      this.rows[index] = {
+        ...row,
+        state: interrupted ? "interrupted" : "complete",
+        durationMs: Math.max(0, at - (this.reasoningStartedAt.get(row.rowId) ?? at)),
+      };
+      this.reasoningStartedAt.delete(row.rowId);
+      for (const [key, rowId] of this.rowByMessageId) {
+        if (rowId === row.rowId) this.rowByMessageId.delete(key);
+      }
+      if (this.anonymousChunkRow?.rowId === row.rowId) this.anonymousChunkRow = null;
+      this.advance();
+    }
+  }
+}
+
+/** ACP refusal can carry a provider failure in metadata while the transport call itself succeeds. */
+export function acpPromptFailure(result: PromptResponse | { error: string }): string | null {
+  if ("error" in result) return sanitizeAcpFailureMessage(result.error);
+  const meta = result._meta as Record<string, unknown> | undefined;
+  const knownFailure = meta?.["codebuddy.ai/outcome"] === "FAILED_MODEL_REQUEST";
+  if (!knownFailure && result.stopReason !== "refusal") return null;
+  const raw = meta?.["codebuddy.ai/errorMessage"];
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "message" in parsed &&
+        typeof parsed.message === "string"
+      )
+        return sanitizeAcpFailureMessage(parsed.message);
+    } catch {
+      return sanitizeAcpFailureMessage(raw);
+    }
+  }
+  return knownFailure ? "ACP Agent 请求失败" : "ACP Agent 拒绝了本次请求";
+}
+
+function sanitizeAcpFailureMessage(message: string): string {
+  return message
+    .replace(/https?:\/\/[^\s)]+/gu, "[URL]")
+    .replace(/[\r\n\t]+/gu, " ")
+    .slice(0, 500);
 }
 
 function mapToolStatus(

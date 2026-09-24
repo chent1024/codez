@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- ACP 连接的会话配置、模式确认与进程生命周期共享原生连接状态。 */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Readable, Writable } from "node:stream";
 import {
@@ -13,6 +14,7 @@ import {
   type RequestPermissionResponse,
   type SessionNotification,
   type SessionConfigOption,
+  type SessionModeState,
 } from "@agentclientprotocol/sdk";
 import {
   shouldSpawnInDetachedProcessGroup,
@@ -110,6 +112,7 @@ export class AcpConnection {
   private inFlight: Promise<PromptResponse> | null = null;
   private closed = false;
   private configOptions: SessionConfigOption[] = [];
+  private modes: SessionModeState | null = null;
   private readonly pendingPermissionCancels = new Set<() => void>();
 
   private constructor(
@@ -153,6 +156,8 @@ export class AcpConnection {
           if (active?.sessionId && notification.sessionId !== active.sessionId) return;
           if (notification.update.sessionUpdate === "config_option_update")
             active?.updateConfigOptions(notification.update.configOptions);
+          if (notification.update.sessionUpdate === "current_mode_update" && active?.modes)
+            active.modes = { ...active.modes, currentModeId: notification.update.currentModeId };
           await observer.onUpdate(notification);
         },
         requestPermission(request) {
@@ -296,6 +301,7 @@ export class AcpConnection {
       "ACP session/new",
     );
     this.nativeSessionId = response.sessionId;
+    this.modes = response.modes ?? null;
     if (response.configOptions) this.updateConfigOptions(response.configOptions);
     return response.sessionId;
   }
@@ -318,7 +324,56 @@ export class AcpConnection {
       "ACP session/load",
     );
     this.nativeSessionId = nativeSessionId;
+    this.modes = response.modes ?? null;
     if (response.configOptions) this.updateConfigOptions(response.configOptions);
+  }
+
+  modeState(): SessionModeState | null {
+    if (this.modes) return this.modes;
+    const option = this.configOptions.find(
+      (candidate) => candidate.category === "mode" && candidate.type === "select",
+    );
+    if (!option || option.type !== "select") return null;
+    return {
+      currentModeId: option.currentValue,
+      availableModes: thinkingValues(option).map(({ value, name, description }) => ({
+        id: value,
+        name,
+        ...(description ? { description } : {}),
+      })),
+    };
+  }
+
+  async setMode(modeId: string): Promise<SessionModeState> {
+    const sessionId = this.requireSession();
+    const modes = this.modeState();
+    if (!modes?.availableModes.some((mode) => mode.id === modeId))
+      throw new Error(`ACP Agent does not advertise mode ${JSON.stringify(modeId)}`);
+    if (modes.currentModeId === modeId) return modes;
+    if (this.modes) {
+      await withTimeout(
+        this.connection.setSessionMode({ sessionId, modeId }),
+        SESSION_SETUP_TIMEOUT_MS,
+        "ACP session/set_mode",
+      );
+      // set_mode 成功回包是本次切换的确认；Agent 也可经通知自行切换。
+      this.modes = { ...this.modes, currentModeId: modeId };
+      return this.modes;
+    }
+    const option = this.configOptions.find(
+      (candidate) => candidate.category === "mode" && candidate.type === "select",
+    );
+    if (!option) throw new Error("ACP Agent mode option disappeared");
+    const updated = await withTimeout(
+      this.connection.setSessionConfigOption({ sessionId, configId: option.id, value: modeId }),
+      SESSION_SETUP_TIMEOUT_MS,
+      "ACP session/set_config_option",
+    );
+    this.updateConfigOptions(updated.configOptions);
+    const confirmed = this.modeState();
+    if (confirmed?.currentModeId !== modeId)
+      throw new Error("ACP Agent did not confirm the requested mode");
+    return confirmed;
   }
 
   prompt(commandId: string, prompt: ContentBlock[]): Promise<PromptResponse> {

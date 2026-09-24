@@ -1382,6 +1382,8 @@ export class TaskIndexRepo {
           // 本身不知道迁移来源。同步运行态快照时保留已有 migrationSource，避免
           // 列表过滤和后续切模型把导入任务重新当成普通 ZCode 任务。
           migrationSource: params.meta.migrationSource ?? existingMeta?.migrationSource,
+          projectWorkspacePath:
+            params.meta.projectWorkspacePath ?? existingMeta?.projectWorkspacePath,
           // 同步运行态快照时保留已有 cron automation 身份：运行态 protocol snapshot 的 meta 不带 cron 标记，
           // 不用已存值兜底会在后续 sync 时把 cron 身份冲掉，导致 icon / 分组 / 关联查询失效。
           cronAutomationId: params.meta.cronAutomationId ?? existingMeta?.cronAutomationId,

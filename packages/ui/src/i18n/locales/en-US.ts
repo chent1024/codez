@@ -1716,6 +1716,14 @@ const enUS: Record<string, string> = {
   "settings.sidebar.group.agentCapabilities": "Agent capabilities",
   "settings.sidebar.group.dataAndStats": "Data and statistics",
   "settings.worktrees.title": "Worktrees",
+  "settings.worktrees.fetchUpstream": "Fetch upstream before creating a worktree",
+  "settings.worktrees.fetchUpstreamDescription":
+    "Fetch the selected branch's upstream before creating a worktree. The source branch stays unchanged; creation stops on fetch failure or divergence.",
+  "worktree.createdInSession": "Worktree created",
+  "worktree.upstreamRefreshed": "Upstream refreshed",
+  "worktree.localUpstream": "Used the local upstream branch commit",
+  "worktree.noUpstream": "No upstream configured; used the local branch commit",
+  "worktree.upstreamSkipped": "Upstream refresh skipped",
   "settings.worktrees.directory": "Worktree directory",
   "settings.worktrees.directoryDescription":
     "Where new worktrees are stored. Leave blank for the default directory. Remove existing worktrees before changing it.",
@@ -4538,6 +4546,9 @@ const enUS: Record<string, string> = {
   "chat.modelSwitch.contextWindowGuard.stillTooLarge":
     "After compression, the context used by this conversation is still larger than the target model's available context after reserving maximum output. Model switching was canceled.",
   "chat.toolbar.mode.label": "Switch mode",
+  "chat.toolbar.acpMode.label": "ACP session mode",
+  "chat.toolbar.acpMode.unavailable": "This agent does not offer session modes",
+  "chat.toolbar.acpMode.placeholder": "Mode",
   // CUA composer entry button
   "chat.toolbar.computerUse.label": "Computer Use",
   "chat.toolbar.computerUse.tooltip.idle":

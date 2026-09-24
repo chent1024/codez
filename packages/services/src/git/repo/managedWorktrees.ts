@@ -11,6 +11,8 @@ interface WorktreeMarker {
   kind: "codez-managed-worktree";
   version: 1;
   worktreePath: string;
+  createdFromCommitHash?: string;
+  upstreamRefresh?: "refreshed" | "local-upstream" | "no-upstream" | "disabled";
 }
 
 export function getManagedWorktreeRoot(managedRootPath?: string): string {
@@ -51,11 +53,15 @@ export async function assertManagedRootOutsideRepository(
 export async function writeManagedWorktreeMarker(
   containerPath: string,
   worktreePath: string,
+  creation?: { commitHash: string; upstreamRefresh: WorktreeMarker["upstreamRefresh"] },
 ): Promise<void> {
   const marker: WorktreeMarker = {
     kind: "codez-managed-worktree",
     version: 1,
     worktreePath,
+    ...(creation
+      ? { createdFromCommitHash: creation.commitHash, upstreamRefresh: creation.upstreamRefresh }
+      : {}),
   };
   await writeFile(join(containerPath, MARKER_NAME), JSON.stringify(marker), { flag: "wx" });
 }
@@ -150,6 +156,16 @@ async function inspectManagedWorktree(
   return {
     worktreePath,
     sourceRepoRoot: first.path,
+    ...(typeof marker.createdFromCommitHash === "string" &&
+    /^[0-9a-f]{40,64}$/.test(marker.createdFromCommitHash) &&
+    ["refreshed", "local-upstream", "no-upstream", "disabled"].includes(
+      marker.upstreamRefresh ?? "",
+    )
+      ? {
+          createdFromCommitHash: marker.createdFromCommitHash,
+          upstreamRefresh: marker.upstreamRefresh,
+        }
+      : {}),
     headCommitHash: head.stdout.trim(),
     branchName: branch.stdout.trim() || null,
     isDirty: status.stdout.trim().length > 0,

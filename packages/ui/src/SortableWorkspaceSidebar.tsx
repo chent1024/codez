@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, type CSSProperties } from "react";
+import { memo, useCallback, useMemo, type CSSProperties, type ReactNode } from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { WorkspaceSidebarItem, type SortableBindings } from "./WorkspaceSidebarItem.js";
@@ -32,6 +32,7 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
   reconnectingRemoteWorkspaceLogsByWorkspaceKey,
   onReconnectRemoteWorkspace,
   onOpenFileTree,
+  childWorktrees,
 }: {
   tab: WorkspaceTabState;
   isActiveWorkspace: boolean;
@@ -62,6 +63,7 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
     workspaceIdentity?: string;
     workspaceRemoteSessionId?: string;
   }) => void;
+  childWorktrees?: ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
@@ -125,6 +127,7 @@ export const SortableWorkspaceSidebarItem = memo(function SortableWorkspaceSideb
       reconnectingRemoteWorkspaceLogsByWorkspaceKey={reconnectingRemoteWorkspaceLogsByWorkspaceKey}
       onReconnectRemoteWorkspace={onReconnectRemoteWorkspace}
       onOpenFileTree={onOpenFileTree}
+      childWorktrees={childWorktrees}
       itemRef={setNodeRef}
       itemStyle={style}
       sortableBindings={sortableBindings}

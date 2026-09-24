@@ -167,6 +167,7 @@ export interface WorkspaceShellLayoutProps extends Omit<AppProps, "baseFeedbackS
     remoteTarget?: import("@zcode/shared").RemoteTarget;
     workspaceIdentity?: string;
     workspacePurpose?: import("@zcode/shared").WorkspacePurpose;
+    projectWorkspacePath?: string;
     localWorkspacePath?: string;
     availability?: import("@/store/tabStore.js").WorkspaceAvailability;
   }>;

@@ -1420,14 +1420,26 @@ export function createZCodeTaskServiceAdapter(
     if (!options.gitService || params.workspaceIdentity?.trim()) return;
     try {
       const listing = await options.gitService.listManagedWorktrees();
-      if (!listing.worktrees.some((entry) => entry.worktreePath === params.workspacePath)) return;
+      const worktree = listing.worktrees.find(
+        (entry) => entry.worktreePath === params.workspacePath,
+      );
+      if (!worktree) return;
+
+      // 归档清理前把经过 Git 和托管标记双重核验的源项目写进任务索引。
+      // 后续即使工作树目录被删除，历史会话仍保有项目归属。
+      const associated = await taskIndexRepo.listTaskMetas({ workspacePath: params.workspacePath });
+      for (const task of associated) {
+        if (task.projectWorkspacePath !== worktree.sourceRepoRoot)
+          await taskIndexRepo.syncTaskMeta({
+            meta: { ...task, projectWorkspacePath: worktree.sourceRepoRoot },
+          });
+      }
 
       const remaining = await taskIndexRepo.listTaskMetas({
         workspacePath: params.workspacePath,
         archived: false,
       });
       if (remaining.length > 0) return;
-      const associated = await taskIndexRepo.listTaskMetas({ workspacePath: params.workspacePath });
       if (
         associated.length === 0 ||
         associated.some((task) => task.status !== "completed" && task.status !== "error")

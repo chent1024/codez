@@ -425,6 +425,7 @@ export function buildPersistedWorkspaceSessionEntries(
       kind: "local",
       workspacePath: tab.workspacePath,
       ...(tab.workspacePurpose ? { workspacePurpose: tab.workspacePurpose } : {}),
+      ...(tab.projectWorkspacePath ? { projectWorkspacePath: tab.projectWorkspacePath } : {}),
     });
     return entries;
   }, []);

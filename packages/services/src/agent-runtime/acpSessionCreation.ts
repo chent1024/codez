@@ -22,6 +22,8 @@ export async function createAcpManagedSession(input: {
   workspaceKey: string;
   modelId?: string;
   thoughtLevel?: string;
+  modeId?: string;
+  projectWorkspacePath?: string;
   parentTaskId?: string;
   spec: AcpRuntimeSpec;
   resolveLaunch: (spec: AcpRuntimeSpec) => Promise<{ executable: string; args: readonly string[] }>;
@@ -60,8 +62,10 @@ export async function createAcpManagedSession(input: {
     if (input.modelId && input.modelId !== ACP_DEFAULT_MODEL_ID)
       await connection.setModel(input.modelId);
     if (input.thoughtLevel) await connection.setThinkingLevel(input.thoughtLevel);
+    if (input.modeId) await connection.setMode(input.modeId);
     projection.setModelOptions(connection.modelOptions());
     projection.setThinkingLevels(connection.thinkingLevels());
+    projection.setModes(connection.modeState());
     await transcript.initialize();
     const now = Date.now();
     const meta: ZCodeTaskMeta = {
@@ -72,6 +76,7 @@ export async function createAcpManagedSession(input: {
       traceId: input.taskId,
       title: "New session",
       workspacePath: input.workspacePath,
+      ...(input.projectWorkspacePath ? { projectWorkspacePath: input.projectWorkspacePath } : {}),
       model: connection.modelOptions().find((model) => model.selected)?.id,
       thoughtLevel: connection.thinkingLevels().find((level) => level.selected)?.value,
       ...(input.parentTaskId ? { forkedFromTaskId: input.parentTaskId } : {}),

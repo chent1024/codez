@@ -400,6 +400,7 @@ export function App({
         remoteTarget: tab.remoteTarget,
         workspaceIdentity: tab.workspaceIdentity,
         workspacePurpose: tab.workspacePurpose,
+        projectWorkspacePath: tab.projectWorkspacePath,
         localWorkspacePath: tab.localWorkspacePath,
         availability: tab.availability,
       })),

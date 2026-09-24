@@ -98,6 +98,7 @@ function buildDefaultPersistPatch(state: TabStoreState): Partial<AppSettings> {
       kind: "local" as const,
       workspacePath: tab.workspacePath,
       ...(tab.workspacePurpose ? { workspacePurpose: tab.workspacePurpose } : {}),
+      ...(tab.projectWorkspacePath ? { projectWorkspacePath: tab.projectWorkspacePath } : {}),
     })),
     lastActiveTabIndex: Math.max(activeIndex, 0),
   };
@@ -188,6 +189,7 @@ export function useTabPersistence({
                     ? {
                         workspacePath: entry.workspacePath,
                         workspacePurpose: entry.workspacePurpose,
+                        projectWorkspacePath: entry.projectWorkspacePath,
                       }
                     : entry.workspacePath,
                 ]

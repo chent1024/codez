@@ -217,6 +217,7 @@ export function createGitService(options?: {
         params.workspacePath,
         params.startBranchName,
         await options?.readManagedWorktreeRoot?.(),
+        params.refreshUpstream,
       );
     },
 

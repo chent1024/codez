@@ -30,6 +30,7 @@ import type {
   ConversationShareAccessMode,
   GitChangeSourceId,
   GitRepositorySummary,
+  GitManagedWorktree,
   ZCodeProvider,
   ZCodeTaskChangeSummary,
 } from "@zcode/shared";
@@ -1321,6 +1322,49 @@ export function SessionPane({
       ? (selectedDraftProviderId ?? "zcode-cli")
       : "zcode-cli";
   const isAcpRuntime = selectedRuntimeId !== "zcode-cli";
+  const [acpModes, setAcpModes] = useState<
+    Array<{ id: string; name: string; description?: string }>
+  >([]);
+  const [acpSelectedMode, setAcpSelectedMode] = useState("");
+  const [acpModeLoading, setAcpModeLoading] = useState(false);
+  useEffect(() => {
+    if (!isAcpRuntime || sessionId !== null) {
+      setAcpModes([]);
+      setAcpSelectedMode("");
+      return;
+    }
+    let cancelled = false;
+    setAcpModeLoading(true);
+    setAcpModes([]);
+    setAcpSelectedMode("");
+    void zcodeAgentService
+      .discoverAgentRuntimeConfig({
+        runtimeId: selectedRuntimeId,
+        workspacePath,
+        ...(workspaceIdentity ? { workspaceIdentity } : {}),
+      })
+      .then((preview) => {
+        if (cancelled) return;
+        setAcpModes(preview.modes ?? []);
+        setAcpSelectedMode(preview.selectedMode ?? "");
+      })
+      .catch((error) => {
+        if (!cancelled) logger.warn("[acp-mode] 无法读取 Agent 会话模式", error);
+      })
+      .finally(() => {
+        if (!cancelled) setAcpModeLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isAcpRuntime,
+    selectedRuntimeId,
+    sessionId,
+    workspaceIdentity,
+    workspacePath,
+    zcodeAgentService,
+  ]);
   const draftModelSelectionRevisionRef = useRef<number | null>(null);
   useEffect(() => {
     if (sessionId !== null) {
@@ -1417,6 +1461,30 @@ export function SessionPane({
     ],
   );
   const { settings: sharedSettings } = useSettings();
+  const [worktreeCreationInfo, setWorktreeCreationInfo] = useState<GitManagedWorktree | null>(null);
+  useEffect(() => {
+    if (!sessionId || remoteSessionId) {
+      setWorktreeCreationInfo(null);
+      return;
+    }
+    setWorktreeCreationInfo(null);
+    let active = true;
+    void (async () => {
+      const repository = await gitService.getWorkspaceRepositoryInfo({ workspacePath });
+      if (repository.kind !== "linked-worktree") return;
+      const listing = await gitService.listManagedWorktrees();
+      if (active) {
+        setWorktreeCreationInfo(
+          listing.worktrees.find((item) => item.worktreePath === workspacePath) ?? null,
+        );
+      }
+    })().catch(() => {
+      if (active) setWorktreeCreationInfo(null);
+    });
+    return () => {
+      active = false;
+    };
+  }, [gitService, remoteSessionId, sessionId, workspacePath]);
   const readPlanIdentitySnapshot = usePlanIdentitySnapshot(
     sharedSettings?.providerFamilyDomain,
     sharedSettings?.providerFamilyDomain
@@ -2610,6 +2678,7 @@ export function SessionPane({
           await gitService.createWorktree({
             workspacePath,
             startBranchName: draftWorktreeBranch,
+            refreshUpstream: sharedSettings?.worktreeFetchUpstreamBeforeCreate ?? true,
           })
         ).worktreePath,
         branch: draftWorktreeBranch,
@@ -2619,7 +2688,7 @@ export function SessionPane({
       const envelope = createCommandEnvelope({
         type: "createSession",
         sessionId: null,
-        payload: { ...payload, workspaceId: created.path },
+        payload: { ...payload, workspaceId: created.path, projectWorkspacePath: workspacePath },
       });
       pendingCommandRegistry.record(envelope, {
         workspace: { workspacePath: created.path },
@@ -2650,6 +2719,7 @@ export function SessionPane({
       gitService,
       onWorktreeSessionCreated,
       remoteSessionId,
+      sharedSettings?.worktreeFetchUpstreamBeforeCreate,
       workspaceIdentity,
       workspacePath,
       zcodeAgentService,
@@ -2724,6 +2794,7 @@ export function SessionPane({
                 acpConfig: {
                   modelId: submission.modelSelection.modelId,
                   thoughtLevel: submission.modelSelection.options?.reasoningLevel,
+                  ...(acpSelectedMode ? { modeId: acpSelectedMode } : {}),
                 },
                 firstInput: {
                   text,
@@ -2745,6 +2816,7 @@ export function SessionPane({
               acpConfig: {
                 modelId: submission.modelSelection.modelId,
                 thoughtLevel: submission.modelSelection.options?.reasoningLevel,
+                ...(acpSelectedMode ? { modeId: acpSelectedMode } : {}),
               },
               firstInput: {
                 text,
@@ -3189,6 +3261,7 @@ export function SessionPane({
       intl,
       isAcpRuntime,
       selectedRuntimeId,
+      acpSelectedMode,
       acpStatuses,
       lease,
       resolveInitialDraftConfig,
@@ -4685,6 +4758,10 @@ export function SessionPane({
         replaceComposerDraft={replaceComposerDraft}
         submissionReady={composerSubmissionReady}
         agentRuntimeId={selectedRuntimeId}
+        acpModes={isDraft ? acpModes : snapshot?.config.acpModeOptions}
+        acpSelectedMode={isDraft ? acpSelectedMode : snapshot?.config.acpModeId}
+        acpModeLoading={acpModeLoading}
+        onSelectAcpMode={setAcpSelectedMode}
         updateComposerContent={updateComposerContent}
         createSubmissionFromComposer={createSubmissionFromComposer}
         contextHeader={isDraft ? draftComposerHeader : undefined}
@@ -5071,25 +5148,53 @@ export function SessionPane({
                 view: shareDraft?.view,
               })}
               headerSlot={
-                // unsupportedRowCount 也要开这个门：整份副本的行都被本 build 跳过时
-                // rows 为空，但只读块必须留下来显示「需要更新 ZCode」，不能整块消失。
-                importedShare &&
-                (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
-                  <ConversationShareImportNotice
-                    rows={importedShare.rows}
-                    unsupportedRowCount={importedShare.unsupportedRowCount}
-                    artifactNames={importedShareArtifactNames}
-                    artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
-                    workspacePath={workspacePath}
-                    {...(workspaceIdentity ? { workspaceIdentity } : {})}
-                    {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
-                    locale={locale}
-                    theme={theme}
-                    codePreviewSettings={codePreviewSettings}
-                    onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
-                    onOpenFileLink={onOpenFileLink}
-                    onOpenCodeViewer={onOpenCodeViewer}
-                  />
+                worktreeCreationInfo?.createdFromCommitHash ||
+                (importedShare &&
+                  (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0)) ? (
+                  <>
+                    {worktreeCreationInfo?.createdFromCommitHash ? (
+                      <details className="mb-4 rounded-lg border border-border px-4 py-3 text-ui-sm text-foreground-subtle">
+                        <summary className="cursor-pointer font-medium text-foreground">
+                          {intl.formatMessage({ id: "worktree.createdInSession" })}
+                        </summary>
+                        <div className="mt-3 space-y-1 font-mono break-all">
+                          <div>
+                            {intl.formatMessage({
+                              id:
+                                worktreeCreationInfo.upstreamRefresh === "refreshed"
+                                  ? "worktree.upstreamRefreshed"
+                                  : worktreeCreationInfo.upstreamRefresh === "local-upstream"
+                                    ? "worktree.localUpstream"
+                                    : worktreeCreationInfo.upstreamRefresh === "no-upstream"
+                                      ? "worktree.noUpstream"
+                                      : "worktree.upstreamSkipped",
+                            })}
+                          </div>
+                          <div>HEAD {worktreeCreationInfo.createdFromCommitHash}</div>
+                          <div>{worktreeCreationInfo.worktreePath}</div>
+                        </div>
+                      </details>
+                    ) : null}
+                    {/* 只有导入副本确实有内容或不兼容行时，才展示只读提示。 */}
+                    {importedShare &&
+                    (importedShare.rows.length > 0 || importedShare.unsupportedRowCount > 0) ? (
+                      <ConversationShareImportNotice
+                        rows={importedShare.rows}
+                        unsupportedRowCount={importedShare.unsupportedRowCount}
+                        artifactNames={importedShareArtifactNames}
+                        artifactWorkspaceRelativePaths={importedShareArtifactWorkspaceRelativePaths}
+                        workspacePath={workspacePath}
+                        {...(workspaceIdentity ? { workspaceIdentity } : {})}
+                        {...(remoteSessionId ? { workspaceRemoteSessionId: remoteSessionId } : {})}
+                        locale={locale}
+                        theme={theme}
+                        codePreviewSettings={codePreviewSettings}
+                        onOpenShareUrl={onOpenBrowserUrl ? handleOpenImportedShareUrl : undefined}
+                        onOpenFileLink={onOpenFileLink}
+                        onOpenCodeViewer={onOpenCodeViewer}
+                      />
+                    ) : null}
+                  </>
                 ) : null
               }
               emptyState={

@@ -88,6 +88,8 @@ export class AcpRuntimeCoordinator {
       runtimeId: AgentRuntimeId;
       modelId?: string;
       thoughtLevel?: string;
+      modeId?: string;
+      projectWorkspacePath?: string;
       parentTaskId?: string;
     },
   ): Promise<ZCodeTaskMeta> {
@@ -109,6 +111,8 @@ export class AcpRuntimeCoordinator {
       runtimeId: AgentRuntimeId;
       modelId?: string;
       thoughtLevel?: string;
+      modeId?: string;
+      projectWorkspacePath?: string;
       parentTaskId?: string;
     },
   ): Promise<ZCodeTaskMeta> {
@@ -136,6 +140,8 @@ export class AcpRuntimeCoordinator {
       workspaceKey: workspaceKey(input),
       modelId: input.modelId,
       thoughtLevel: input.thoughtLevel,
+      modeId: input.modeId,
+      projectWorkspacePath: input.projectWorkspacePath,
       parentTaskId: input.parentTaskId,
       spec,
       resolveLaunch: this.resolveLaunch,
@@ -217,6 +223,7 @@ export class AcpRuntimeCoordinator {
           await connection.setThinkingLevel(meta.thoughtLevel);
         projection.setModelOptions(connection.modelOptions());
         projection.setThinkingLevels(connection.thinkingLevels());
+        projection.setModes(connection.modeState());
         const entries = (await transcript.read()) ?? [];
         managed = createManagedAcpSession({
           connection,
@@ -518,7 +525,7 @@ export class AcpRuntimeCoordinator {
     managed.meta = {
       ...managed.meta,
       updatedAt: Date.now(),
-      status: "error" in result ? "error" : "completed",
+      status: managed.projection.snapshot().control.phase === "error" ? "error" : "completed",
     };
     await this.taskIndex.syncTaskMeta({ meta: managed.meta }).catch(() => {});
     this.publish(managed);

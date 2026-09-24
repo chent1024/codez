@@ -12,11 +12,14 @@ import { createInterface } from 'node:readline';
 const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
 let thought = 'low';
 let model = 'auto';
+let mode = 'ask';
 let pendingPermissionPrompt = null;
 const configOptions = () => [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: model,
   options: [{ value: 'auto', name: 'Auto' }, { value: 'ultimate', name: 'Ultimate' }] },
   { id: 'reasoning_effort', name: 'Reasoning', category: 'model', type: 'select', currentValue: thought,
-  options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] }];
+  options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }] },
+  ...(process.env.ACP_TEST_CONFIG_MODE ? [{ id: 'permission-mode', name: 'Mode', category: 'mode', type: 'select', currentValue: mode,
+    options: [{ value: 'ask', name: 'Ask' }, { value: 'code', name: 'Code' }] }] : [])];
 for await (const line of lines) {
   const message = JSON.parse(line);
   if (message.method === 'initialize') {
@@ -25,13 +28,17 @@ for await (const line of lines) {
       agentCapabilities: { loadSession: true }
     } }) + '\\n');
   } else if (message.method === 'session/new') {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'native-123', configOptions: configOptions() } }) + '\\n');
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'native-123', configOptions: configOptions(), modes: process.env.ACP_TEST_CONFIG_MODE ? undefined : { currentModeId: mode, availableModes: [{ id: 'ask', name: 'Ask' }, { id: 'code', name: 'Code' }] } } }) + '\\n');
   } else if (message.method === 'session/load') {
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { configOptions: configOptions() } }) + '\\n');
   } else if (message.method === 'session/set_config_option') {
     if (message.params.configId === 'model') model = message.params.value;
+    else if (message.params.configId === 'permission-mode') mode = message.params.value;
     else thought = message.params.value;
     process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { configOptions: configOptions() } }) + '\\n');
+  } else if (message.method === 'session/set_mode') {
+    mode = message.params.modeId;
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} }) + '\\n');
   } else if (message.method === 'session/prompt') {
     if (message.params.prompt.some((block) => block.type === 'text' && block.text === 'permission')) {
       pendingPermissionPrompt = message.id;
@@ -74,6 +81,9 @@ test("ACP connection initializes, binds a native session, streams updates and de
       },
     );
     assert.equal(await connection.createSession(dir), "native-123");
+    assert.equal(connection.modeState()?.currentModeId, "ask");
+    await assert.rejects(connection.setMode("unadvertised"), /does not advertise/);
+    assert.equal((await connection.setMode("code")).currentModeId, "code");
     assert.deepEqual(
       connection.modelOptions().map((model) => [model.name, model.selected]),
       [
@@ -107,6 +117,36 @@ test("ACP connection initializes, binds a native session, streams updates and de
     const duplicate = await connection.prompt("command-1", [{ type: "text", text: "ignored" }]);
     assert.deepEqual(duplicate, first);
     await assert.rejects(connection.createSession(dir), /already bound/);
+  } finally {
+    await connection?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ACP accepts an advertised mode config option and confirms its value", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codez-acp-config-mode-"));
+  const agentFile = join(dir, "agent.mjs");
+  let connection: AcpConnection | undefined;
+  try {
+    await writeFile(agentFile, FAKE_AGENT);
+    connection = await AcpConnection.open(
+      {
+        executable: process.execPath,
+        args: [agentFile],
+        cwd: dir,
+        env: { ...process.env, ACP_TEST_CONFIG_MODE: "1" },
+      },
+      {
+        onUpdate: () => {},
+        requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
+      },
+    );
+    await connection.createSession(dir);
+    assert.deepEqual(
+      connection.modeState()?.availableModes.map(({ id }) => id),
+      ["ask", "code"],
+    );
+    assert.equal((await connection.setMode("code")).currentModeId, "code");
   } finally {
     await connection?.close();
     await rm(dir, { recursive: true, force: true });

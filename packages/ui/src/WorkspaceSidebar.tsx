@@ -78,6 +78,11 @@ import { useZCodeStore } from "@/store/StoreProvider.js";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceReadOnly, isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { useWorkspaceTaskLists } from "@/hooks/useWorkspaceTaskLists.js";
+import { useServices } from "@/hooks/useServices.js";
+import {
+  includeManagedWorktreeTaskTabs,
+  projectPathForWorktreeTab,
+} from "@/lib/worktreeProjectGrouping.js";
 import {
   persistSidebarTaskPreferences,
   readSidebarTaskPreferences,
@@ -123,6 +128,7 @@ import {
   SortableWorkspaceSidebarItem,
   restrictVerticalDragWithinContainer,
 } from "./SortableWorkspaceSidebar.js";
+import { WorkspaceSidebarItem } from "@/WorkspaceSidebarItem.js";
 import {
   resolveSidebarTaskGroupTogglePresentation,
   type SidebarTaskGroupTogglePresentation,
@@ -316,6 +322,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   onFileTreeOpenChange?: (open: boolean) => void;
 }) {
   const { intl, localePreference, setLocalePreference } = useZCodeIntl();
+  const { gitService } = useServices();
   const handleTaskRowSelect = useCallback(
     (
       targetWorkspacePath: string,
@@ -361,6 +368,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const commandCenterShortcutLabel = useShortcutCommandLabel("openCommandCenter");
   const tabs = useTabStore((state) => state.tabs);
   const activateTab = useTabStore((state) => state.activateTab);
+  const ensureWorkspaceTab = useTabStore((state) => state.ensureWorkspaceTab);
   const closeTab = useTabStore((state) => state.closeTab);
   const openSettingsTab = useTabStore((state) => state.openSettingsTab);
   const expandedWorkspacePaths = useTabStore((state) => state.expandedWorkspacePaths);
@@ -370,9 +378,47 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const collapseAllWorkspaceTabs = useTabStore((state) => state.collapseAllWorkspaceTabs);
 
   const workspaceTabs = useMemo(() => tabs.filter(isWorkspaceTab), [tabs]);
-  const { conversationWorkspaceTabs, projectWorkspaceTabs } = useMemo(
+  const { conversationWorkspaceTabs, projectWorkspaceTabs: allProjectWorkspaceTabs } = useMemo(
     () => partitionWorkspaceTabsByPurpose(workspaceTabs),
     [workspaceTabs],
+  );
+  const [managedWorktreeSources, setManagedWorktreeSources] = useState<Map<string, string>>(
+    new Map(),
+  );
+  useEffect(() => {
+    let cancelled = false;
+    void gitService
+      .listManagedWorktrees()
+      .then((listing) => {
+        if (!cancelled) {
+          setManagedWorktreeSources(
+            new Map(listing.worktrees.map((entry) => [entry.worktreePath, entry.sourceRepoRoot])),
+          );
+          // 旧版工作树 tab 没有项目归属；只依据已验证的托管工作树记录补齐。
+          for (const entry of listing.worktrees) {
+            const tab = workspaceTabs.find(
+              (candidate) => candidate.workspacePath === entry.worktreePath,
+            );
+            if (tab && tab.projectWorkspacePath !== entry.sourceRepoRoot)
+              ensureWorkspaceTab(entry.worktreePath, {
+                projectWorkspacePath: entry.sourceRepoRoot,
+              });
+          }
+        }
+      })
+      .catch((error) => logger.warn("[workspace-sidebar] 托管工作树列表读取失败", error));
+    return () => {
+      cancelled = true;
+    };
+  }, [gitService, workspaceTabs, ensureWorkspaceTab]);
+  const projectWorkspaceTabs = useMemo(() => {
+    return allProjectWorkspaceTabs.filter(
+      (tab) => !projectPathForWorktreeTab(tab, allProjectWorkspaceTabs, managedWorktreeSources),
+    );
+  }, [allProjectWorkspaceTabs, managedWorktreeSources]);
+  const taskWorkspaceTabs = useMemo(
+    () => includeManagedWorktreeTaskTabs(allProjectWorkspaceTabs, managedWorktreeSources),
+    [allProjectWorkspaceTabs, managedWorktreeSources],
   );
   const workspacePaths = useMemo(
     () => projectWorkspaceTabs.map((tab) => tab.workspacePath),
@@ -628,7 +674,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   );
   const localeMenuValue = localePreference === "system" ? "system" : localePreference;
   const workspaceTaskLists = useWorkspaceTaskLists({
-    workspaceTabs: projectWorkspaceTabs,
+    workspaceTabs: taskWorkspaceTabs,
     activeWorkspacePath: workspacePath,
     activeWorkspaceIdentity: workspaceIdentity,
     sortBy: taskSortBy,
@@ -1521,7 +1567,18 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                           <SortableWorkspaceSidebarItem
                                             key={tab.id}
                                             tab={tab}
-                                            isActiveWorkspace={tab.workspacePath === workspacePath}
+                                            isActiveWorkspace={
+                                              tab.workspacePath === workspacePath ||
+                                              allProjectWorkspaceTabs.some(
+                                                (child) =>
+                                                  child.workspacePath === workspacePath &&
+                                                  projectPathForWorktreeTab(
+                                                    child,
+                                                    allProjectWorkspaceTabs,
+                                                    managedWorktreeSources,
+                                                  ) === tab.workspacePath,
+                                              )
+                                            }
                                             isExpanded={resolveWorkspaceDragExpanded({
                                               activeDragId: activeWorkspaceDragId,
                                               expanded: expandedWorkspacePaths.has(
@@ -1556,6 +1613,74 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                                             }
                                             onReconnectRemoteWorkspace={onReconnectRemoteWorkspace}
                                             onOpenFileTree={handleOpenWorkspaceFileTree}
+                                            childWorktrees={taskWorkspaceTabs
+                                              .filter(
+                                                (child) =>
+                                                  projectPathForWorktreeTab(
+                                                    child,
+                                                    taskWorkspaceTabs,
+                                                    managedWorktreeSources,
+                                                  ) === tab.workspacePath,
+                                              )
+                                              .map((child) => {
+                                                const childKey = buildTaskWorkspaceKey(
+                                                  child.workspacePath,
+                                                  child.workspaceIdentity,
+                                                );
+                                                const childGroup =
+                                                  workspaceTaskGroupByKey.get(childKey);
+                                                return (
+                                                  <WorkspaceSidebarItem
+                                                    key={child.id}
+                                                    tab={child}
+                                                    taskListOnly
+                                                    isActiveWorkspace={
+                                                      child.workspacePath === workspacePath
+                                                    }
+                                                    isExpanded
+                                                    activateTab={activateTab}
+                                                    closeTab={closeTab}
+                                                    toggleWorkspaceExpanded={
+                                                      toggleWorkspaceExpanded
+                                                    }
+                                                    onSelectTask={onSelectTask}
+                                                    onStartDraftInWorkspace={
+                                                      onStartDraftInWorkspace
+                                                    }
+                                                    taskItems={
+                                                      childGroup?.items ??
+                                                      EMPTY_WORKSPACE_TASK_ITEMS
+                                                    }
+                                                    taskListLoading={
+                                                      workspaceTaskLists.loadingByWorkspaceKey[
+                                                        childKey
+                                                      ] ?? false
+                                                    }
+                                                    taskListHasMore={childGroup?.hasMore ?? false}
+                                                    taskListHasUnread={
+                                                      childGroup?.hasUnread ?? false
+                                                    }
+                                                    taskListLiveWorkflowCount={
+                                                      childGroup?.liveWorkflowCount ?? 0
+                                                    }
+                                                    onShowMoreTasks={() =>
+                                                      handleShowMoreWorkspaceTasks(childKey)
+                                                    }
+                                                    reconnectingRemoteWorkspaceKeys={
+                                                      reconnectingRemoteWorkspaceKeys
+                                                    }
+                                                    remoteWorkspaceErrorByWorkspaceKey={
+                                                      remoteWorkspaceErrorByWorkspaceKey
+                                                    }
+                                                    reconnectingRemoteWorkspaceLogsByWorkspaceKey={
+                                                      reconnectingRemoteWorkspaceLogsByWorkspaceKey
+                                                    }
+                                                    onReconnectRemoteWorkspace={
+                                                      onReconnectRemoteWorkspace
+                                                    }
+                                                  />
+                                                );
+                                              })}
                                           />
                                         );
                                       })}

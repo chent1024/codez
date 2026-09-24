@@ -45,10 +45,15 @@ export const commandPayloadSchemas = {
   // firstInput 缺省 → phase=draft 空会话；携带 → 直接 turnHeader+userInput rows。
   createSession: z.object({
     workspaceId: z.string(),
+    projectWorkspacePath: z.string().optional(),
     // 工作台草稿选择；Host 在创建前路由，CLI 仅接收缺省 zcode-cli。
     runtimeId: agentRuntimeIdSchema.optional(),
     acpConfig: z
-      .object({ modelId: z.string().optional(), thoughtLevel: z.string().optional() })
+      .object({
+        modelId: z.string().optional(),
+        thoughtLevel: z.string().optional(),
+        modeId: z.string().optional(),
+      })
       .optional(),
     firstInput: z
       .object({

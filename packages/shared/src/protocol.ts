@@ -183,6 +183,7 @@ export interface LocalWorkspaceSessionEntry {
   workspacePath: string;
   /** 项目展示分类；旧数据缺省为 project，conversation 仍使用真实 workspacePath 作为 cwd/key。 */
   workspacePurpose?: WorkspacePurpose;
+  projectWorkspacePath?: string;
 }
 
 export interface RemoteWorkspaceSessionEntry extends RemoteWorkspaceSessionSnapshot {
@@ -350,6 +351,8 @@ export interface AppSettings {
   dataBaseDir?: string;
   /** CodeZ 托管工作树的自定义根目录；空值使用数据根目录下的 worktrees。 */
   worktreeRootDirectory?: string;
+  /** 新建工作树前获取所选分支的上游更新。 */
+  worktreeFetchUpstreamBeforeCreate?: boolean;
   /** 自动更新安装完成后，等待首次启动展示的版本说明 */
   pendingPostUpdateReleaseNotes?: {
     version: string;

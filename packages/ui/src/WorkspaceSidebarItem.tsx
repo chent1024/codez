@@ -1,5 +1,6 @@
 /* eslint-disable max-lines -- workspace 行同时承载折叠、远端状态和快捷操作，先保持同文件收口。 */
 import {
+  Children,
   memo,
   useCallback,
   useEffect,
@@ -7,6 +8,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import {
   CheckIcon,
@@ -147,6 +149,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
   reconnectingRemoteWorkspaceLogsByWorkspaceKey,
   onReconnectRemoteWorkspace,
   onOpenFileTree,
+  childWorktrees,
+  taskListOnly = false,
   itemRef,
   itemStyle,
   sortableBindings,
@@ -181,6 +185,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     workspaceIdentity?: string;
     workspaceRemoteSessionId?: string;
   }) => void;
+  childWorktrees?: ReactNode;
+  taskListOnly?: boolean;
   itemRef?: (node: HTMLLIElement | null) => void;
   itemStyle?: CSSProperties;
   sortableBindings?: SortableBindings;
@@ -784,6 +790,32 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
     </div>
   );
 
+  const taskList = (
+    <TaskList
+      workspacePath={tab.workspacePath}
+      remoteSessionId={tab.remoteSessionId}
+      workspaceIdentity={tab.workspaceIdentity}
+      tasks={taskItems}
+      pinnedTasks={EMPTY_PINNED_TASKS}
+      activeTaskId={isActiveWorkspace ? activeTaskId : null}
+      onSelectTask={handleSelectTask}
+      showCreateButton={false}
+      showFooter={false}
+      showEmptyState={!taskListOnly && Children.count(childWorktrees) === 0}
+      loading={taskListLoading}
+      hasMore={taskListHasMore}
+      onShowMore={onShowMoreTasks}
+      onRenameTask={handleRenameTask}
+      onSetTaskPinned={handleSetTaskPinned}
+      onArchiveTask={handleArchiveTask}
+      onSetTaskUnread={handleSetTaskUnread}
+      readOnlyReason={readOnlyReason}
+    />
+  );
+  if (taskListOnly) {
+    return taskList;
+  }
+
   return (
     <li ref={itemRef} style={itemStyle} className="space-y-2">
       <Collapsible
@@ -1115,25 +1147,8 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
         </BorderBeam>
 
         <CollapsibleContent>
-          <TaskList
-            workspacePath={tab.workspacePath}
-            remoteSessionId={tab.remoteSessionId}
-            workspaceIdentity={tab.workspaceIdentity}
-            tasks={taskItems}
-            pinnedTasks={EMPTY_PINNED_TASKS}
-            activeTaskId={isActiveWorkspace ? activeTaskId : null}
-            onSelectTask={handleSelectTask}
-            showCreateButton={false}
-            showFooter={false}
-            loading={taskListLoading}
-            hasMore={taskListHasMore}
-            onShowMore={onShowMoreTasks}
-            onRenameTask={handleRenameTask}
-            onSetTaskPinned={handleSetTaskPinned}
-            onArchiveTask={handleArchiveTask}
-            onSetTaskUnread={handleSetTaskUnread}
-            readOnlyReason={readOnlyReason}
-          />
+          {taskList}
+          {childWorktrees}
         </CollapsibleContent>
       </Collapsible>
       <RemoteSyncDialogs

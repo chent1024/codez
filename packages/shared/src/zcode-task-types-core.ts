@@ -284,6 +284,8 @@ export interface ZCodeTaskMeta {
   titleOverridden?: boolean;
   /** 关联的 workspace 绝对路径 */
   workspacePath: string;
+  /** 来源项目；工作树会话的运行目录仍由 workspacePath 指定。 */
+  projectWorkspacePath?: string;
   /**
    * 远程 workspace 的稳定身份（authority + canonicalPath）。
    *

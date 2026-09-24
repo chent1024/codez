@@ -592,6 +592,8 @@ export interface AgentRuntimeInstallStatus {
 }
 
 export interface AgentRuntimeConfigPreview {
+  modes?: Array<{ id: string; name: string; description?: string }>;
+  selectedMode?: string;
   models: Array<{
     id: string;
     name: string;

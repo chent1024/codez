@@ -107,6 +107,7 @@ const appWorkspaceSessionEntrySchema = z.discriminatedUnion("kind", [
     kind: z.literal("local"),
     workspacePath: nonEmptyStringSchema,
     workspacePurpose: z.enum(["project", "conversation"]).default("project"),
+    projectWorkspacePath: nonEmptyStringSchema.optional(),
   }),
   z.object({
     kind: z.literal("remote"),
@@ -332,6 +333,9 @@ function migrateLegacyWorkspaceSession(value: unknown): unknown {
                 workspacePath: rawEntry.workspacePath,
                 workspacePurpose:
                   rawEntry.workspacePurpose === "conversation" ? "conversation" : "project",
+                ...(typeof rawEntry.projectWorkspacePath === "string"
+                  ? { projectWorkspacePath: rawEntry.projectWorkspacePath }
+                  : {}),
               },
             ];
           }
@@ -467,6 +471,7 @@ const appSettingsObjectSchema = z.object({
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   worktreeRootDirectory: z.string().trim().optional(),
+  worktreeFetchUpstreamBeforeCreate: z.boolean().default(true),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
   receivePreviewUpdates: z.boolean().default(false),
   autoDownloadAndInstallUpdates: z.boolean().default(false),
@@ -553,6 +558,7 @@ export const appSettingsPatchSchema = z.object({
   lastActiveTaskByWorkspace: z.record(z.string(), z.string()).optional(),
   dataBaseDir: z.string().trim().min(1).optional(),
   worktreeRootDirectory: z.string().trim().optional(),
+  worktreeFetchUpstreamBeforeCreate: z.boolean().optional(),
   pendingPostUpdateReleaseNotes: postUpdateReleaseNotesPayloadSchema.optional(),
   receivePreviewUpdates: z.boolean().optional(),
   autoDownloadAndInstallUpdates: z.boolean().optional(),

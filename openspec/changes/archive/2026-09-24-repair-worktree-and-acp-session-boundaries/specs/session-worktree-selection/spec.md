@@ -1,27 +1,4 @@
-# session-worktree-selection Specification
-
-## Purpose
-
-定义新会话输入框的本地工作位置选择，以及从选中 Git 分支创建独立工作树、在该目录中接纳首条输入和打开会话的行为。失败时保留源项目与草稿，防止重复执行首次输入。
-## Requirements
-### Requirement: Choose a local worktree for a new session
-
-CodeZ SHALL 在现有新会话输入框上方、项目与分支控件之间显示简洁的工作位置菜单，提供“本地”和“新建本地工作树”。工作位置文字 SHALL 与相邻项目、分支文字使用同一前景色；菜单选项 SHALL 沿用工作区选择菜单的紧凑行距。默认“本地”保持现有行为。只有可用的本地 Git 项目可以选择创建工作树。选择工作树时，分支控件 SHALL 只选择创建起点，不得切换源目录的分支。
-
-#### Scenario: Default local conversation
-
-- **WHEN** 用户未改变工作位置并提交首条输入
-- **THEN** CodeZ 沿用原工作区会话创建路径，不创建 Git worktree
-
-#### Scenario: Select a worktree starting branch
-
-- **WHEN** 用户在本地 Git 项目草稿中选择新建本地工作树及起点分支
-- **THEN** 项目和输入内容保持不变，源目录 HEAD 与工作文件保持不变；提交前不创建目录或会话
-
-#### Scenario: Unsupported workspace
-
-- **WHEN** 当前工作区为远程、非 Git 或 Git 不可用
-- **THEN** 新建本地工作树不可选，原因可见，本地会话仍可提交
+## MODIFIED Requirements
 
 ### Requirement: Start the first turn in the created worktree
 
@@ -51,6 +28,8 @@ CodeZ SHALL 在用户提交首条输入时，从选中分支的已提交 HEAD �
 
 - **WHEN** 用户打开创建于旧版本、且可核验源仓库的 CodeZ 托管工作树会话
 - **THEN** 项目列表在源项目下显示该会话，继续以原工作树路径执行；归属不明的会话保留独立展示并显示真实路径
+
+## ADDED Requirements
 
 ### Requirement: Refresh upstream before creating a worktree
 

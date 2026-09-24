@@ -29,6 +29,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useRemoteConnectionEntryVisibility } from "@/hooks/useRemoteConnectionEntryVisibility.js";
 import { cn } from "@/components/lib/utils.js";
+import { projectPathForWorktreeTab } from "@/lib/worktreeProjectGrouping.js";
 import { getPathLeaf } from "@/lib/path.js";
 import {
   formatRemoteWorkspaceTargetSubtitle,
@@ -47,6 +48,8 @@ import {
   type WorkspacePurpose,
 } from "@zcode/shared";
 import { runUserAction, runUserActionAsync } from "@/lib/userActionTelemetry.js";
+
+const EMPTY_VERIFIED_WORKTREE_SOURCES = new Map<string, string>();
 export {
   getScratchWorkspaceLocationHint,
   getScratchWorkspaceNameErrorKind,
@@ -98,6 +101,7 @@ export interface ChatEmptyWorkspaceMenuTab {
   remoteTarget?: RemoteTarget;
   workspaceIdentity?: string;
   workspacePurpose?: WorkspacePurpose;
+  projectWorkspacePath?: string;
 }
 
 function isWorkspaceMenuTabSelected(
@@ -246,7 +250,13 @@ export function ChatEmptyWorkspacePreviewMenu({
     () =>
       filterVisibleWorkspaceMenuTabs({
         workspaceTabs: workspaceTabs.filter(
-          (workspaceTab) => workspaceTab.workspacePurpose !== "conversation",
+          (workspaceTab) =>
+            workspaceTab.workspacePurpose !== "conversation" &&
+            !projectPathForWorktreeTab(
+              workspaceTab,
+              workspaceTabs,
+              EMPTY_VERIFIED_WORKTREE_SOURCES,
+            ),
         ),
         homeWorkspaceLabel,
         searchQuery: workspaceSearchQuery,

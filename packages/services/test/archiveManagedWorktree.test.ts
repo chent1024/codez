@@ -78,6 +78,11 @@ test("manual archive removes only the final published and terminal worktree conv
     await taskIndexRepo.syncTaskMeta({ meta: task("second", "running") });
     await service.archiveTask({ taskId: "first", workspacePath: worktreePath });
     assert.deepEqual(removed, []);
+    assert.equal(
+      (await taskIndexRepo.getTaskMeta({ taskId: "first", workspacePath: worktreePath }))
+        ?.projectWorkspacePath,
+      "/source/project",
+    );
 
     await taskIndexRepo.applyAgentPatch({
       taskId: "second",
@@ -86,6 +91,17 @@ test("manual archive removes only the final published and terminal worktree conv
     });
     await service.archiveTask({ taskId: "second", workspacePath: worktreePath });
     assert.deepEqual(removed, [worktreePath]);
+    assert.equal(
+      (await taskIndexRepo.getTaskMeta({ taskId: "second", workspacePath: worktreePath }))
+        ?.projectWorkspacePath,
+      "/source/project",
+    );
+    await taskIndexRepo.syncTaskMeta({ meta: task("second", "completed") });
+    assert.equal(
+      (await taskIndexRepo.getTaskMeta({ taskId: "second", workspacePath: worktreePath }))
+        ?.projectWorkspacePath,
+      "/source/project",
+    );
     assert.equal(
       (await taskIndexRepo.listTaskMetas({ workspacePath: worktreePath, archived: true })).length,
       2,

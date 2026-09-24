@@ -59,6 +59,13 @@ export async function discoverAcpRuntimeConfig(input: {
       selectedModel,
       thoughtLevels: levels.map(({ value, name }) => ({ value, name })),
       selectedThought: levels.find((level) => level.selected)?.value ?? "",
+      modes:
+        connection.modeState()?.availableModes.map(({ id, name, description }) => ({
+          id,
+          name,
+          ...(description ? { description } : {}),
+        })) ?? [],
+      selectedMode: connection.modeState()?.currentModeId ?? "",
     };
   } finally {
     await connection.close();

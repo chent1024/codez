@@ -41,6 +41,8 @@ export interface WorkspaceTabState extends TabState {
   workspaceIdentity?: string;
   localWorkspacePath?: string;
   workspacePurpose?: WorkspacePurpose;
+  /** 托管工作树的原项目；workspacePath 仍是此会话的运行目录。 */
+  projectWorkspacePath?: string;
 }
 
 export interface WorkspaceTabOptions {
@@ -51,6 +53,7 @@ export interface WorkspaceTabOptions {
   workspaceIdentity?: string;
   localWorkspacePath?: string;
   workspacePurpose?: WorkspacePurpose;
+  projectWorkspacePath?: string;
 }
 
 export interface RestorableWorkspaceTab {
@@ -61,6 +64,7 @@ export interface RestorableWorkspaceTab {
   workspaceIdentity?: string;
   localWorkspacePath?: string;
   workspacePurpose?: WorkspacePurpose;
+  projectWorkspacePath?: string;
 }
 
 export type WindowTabState = WorkspaceTabState | SettingsTabState;
@@ -161,6 +165,7 @@ function createWorkspaceTab(
     workspaceIdentity: options?.workspaceIdentity,
     localWorkspacePath: options?.localWorkspacePath,
     workspacePurpose: options?.workspacePurpose,
+    projectWorkspacePath: options?.projectWorkspacePath,
   };
 }
 
@@ -177,6 +182,7 @@ function mergeWorkspaceTabOptions(
     workspaceIdentity: options?.workspaceIdentity ?? tab.workspaceIdentity,
     localWorkspacePath: options?.localWorkspacePath ?? tab.localWorkspacePath,
     workspacePurpose: options?.workspacePurpose ?? tab.workspacePurpose,
+    projectWorkspacePath: options?.projectWorkspacePath ?? tab.projectWorkspacePath,
   };
 }
 
@@ -580,6 +586,7 @@ export function createTabStore(storage: StorageLike | null | undefined = undefin
           remoteTarget: normalized.remoteTarget,
           workspaceIdentity: normalized.workspaceIdentity,
           workspacePurpose: normalized.workspacePurpose,
+          projectWorkspacePath: normalized.projectWorkspacePath,
           availability: normalized.availability,
         });
       });
@@ -613,6 +620,7 @@ export function createTabStore(storage: StorageLike | null | undefined = undefin
             workspaceIdentity: normalized.workspaceIdentity,
             localWorkspacePath: normalized.localWorkspacePath,
             workspacePurpose: normalized.workspacePurpose,
+            projectWorkspacePath: normalized.projectWorkspacePath,
             availability: normalized.availability,
           };
           const existing = state.tabs.find(

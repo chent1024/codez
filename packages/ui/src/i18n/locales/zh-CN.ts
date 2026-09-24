@@ -1617,6 +1617,14 @@ const zhCN: Record<string, string> = {
   "settings.sidebar.group.agentCapabilities": "Agent 能力",
   "settings.sidebar.group.dataAndStats": "数据与统计",
   "settings.worktrees.title": "Worktrees",
+  "settings.worktrees.fetchUpstream": "创建工作树前获取上游更新",
+  "settings.worktrees.fetchUpstreamDescription":
+    "创建新工作树前获取所选分支的上游提交。源分支不会被移动；分叉或获取失败时会停止创建。",
+  "worktree.createdInSession": "已创建工作树",
+  "worktree.upstreamRefreshed": "已获取上游更新",
+  "worktree.localUpstream": "使用本地上游分支提交",
+  "worktree.noUpstream": "未配置上游，使用本地分支提交",
+  "worktree.upstreamSkipped": "未获取上游更新",
   "settings.worktrees.directory": "工作树目录",
   "settings.worktrees.directoryDescription":
     "新工作树的存放位置；留空使用默认目录。已有工作树时先移除，再修改目录。",
@@ -4265,6 +4273,9 @@ const zhCN: Record<string, string> = {
   "chat.modelSwitch.contextWindowGuard.stillTooLarge":
     "压缩完成后，当前会话已使用的上下文仍大于目标模型预留最大输出后的可用上下文，模型切换已取消。",
   "chat.toolbar.mode.label": "切换模式",
+  "chat.toolbar.acpMode.label": "ACP 会话模式",
+  "chat.toolbar.acpMode.unavailable": "此 Agent 未提供会话模式",
+  "chat.toolbar.acpMode.placeholder": "模式",
   // CUA 输入框常驻入口按钮
   "chat.toolbar.computerUse.label": "电脑操作",
   "chat.toolbar.computerUse.tooltip.idle": "电脑操作空闲——首次使用时自动启动",

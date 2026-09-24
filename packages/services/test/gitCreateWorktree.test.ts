@@ -83,6 +83,169 @@ test("worktree creation rejects a branch that is not local", async () => {
   }
 });
 
+test("worktree refreshes upstream without moving the source branch", async () => {
+  const base = await mkdtemp(join(tmpdir(), "codez-worktree-upstream-"));
+  const repo = join(base, "project");
+  const remote = join(base, "remote.git");
+  const other = join(base, "other");
+  await mkdir(repo);
+  setDataBaseDir(base);
+  try {
+    await git(repo, "init", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
+    await writeFile(join(repo, "file.txt"), "initial\n");
+    await git(repo, "add", "file.txt");
+    await git(repo, "commit", "-m", "initial");
+    await git(base, "init", "--bare", remote);
+    await git(repo, "remote", "add", "origin", remote);
+    await git(repo, "push", "-u", "origin", "main");
+    const sourceHead = await git(repo, "rev-parse", "HEAD");
+    await git(base, "clone", remote, other);
+    await git(other, "config", "user.email", "test@example.com");
+    await git(other, "config", "user.name", "Test");
+    await git(other, "switch", "main");
+    await writeFile(join(other, "file.txt"), "upstream\n");
+    await git(other, "commit", "-am", "upstream");
+    await git(other, "push", "origin", "main");
+    const remoteHead = await git(other, "rev-parse", "HEAD");
+
+    const created = await createGitService().createWorktree({
+      workspacePath: repo,
+      startBranchName: "main",
+      refreshUpstream: true,
+    });
+    assert.equal(created.startCommitHash, remoteHead);
+    assert.equal(await git(created.worktreePath, "rev-parse", "HEAD"), remoteHead);
+    assert.equal(await git(repo, "rev-parse", "main"), sourceHead);
+    const listed = await createGitService().listManagedWorktrees();
+    assert.equal(listed.worktrees[0]?.createdFromCommitHash, remoteHead);
+    assert.equal(listed.worktrees[0]?.upstreamRefresh, "refreshed");
+  } finally {
+    setDataBaseDir(null);
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("worktree refresh stops before creation when the upstream cannot be fetched", async () => {
+  const base = await mkdtemp(join(tmpdir(), "codez-worktree-fetch-fail-"));
+  const repo = join(base, "project");
+  const remote = join(base, "remote.git");
+  await mkdir(repo);
+  setDataBaseDir(base);
+  try {
+    await git(repo, "init", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
+    await writeFile(join(repo, "file.txt"), "initial\n");
+    await git(repo, "add", "file.txt");
+    await git(repo, "commit", "-m", "initial");
+    await git(base, "init", "--bare", remote);
+    await git(repo, "remote", "add", "origin", remote);
+    await git(repo, "push", "-u", "origin", "main");
+    await git(repo, "remote", "set-url", "origin", join(base, "missing.git"));
+
+    await assert.rejects(
+      createGitService().createWorktree({
+        workspacePath: repo,
+        startBranchName: "main",
+        refreshUpstream: true,
+      }),
+      /refresh upstream/i,
+    );
+    assert.equal(
+      (await git(repo, "worktree", "list", "--porcelain"))
+        .split("\n")
+        .filter((line) => line.startsWith("worktree ")).length,
+      1,
+    );
+  } finally {
+    setDataBaseDir(null);
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("worktree refresh refuses diverged local and upstream commits", async () => {
+  const base = await mkdtemp(join(tmpdir(), "codez-worktree-diverged-"));
+  const repo = join(base, "project");
+  const remote = join(base, "remote.git");
+  const other = join(base, "other");
+  await mkdir(repo);
+  setDataBaseDir(base);
+  try {
+    await git(repo, "init", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
+    await writeFile(join(repo, "file.txt"), "initial\n");
+    await git(repo, "add", "file.txt");
+    await git(repo, "commit", "-m", "initial");
+    await git(base, "init", "--bare", remote);
+    await git(repo, "remote", "add", "origin", remote);
+    await git(repo, "push", "-u", "origin", "main");
+    await git(base, "clone", remote, other);
+    await git(other, "config", "user.email", "test@example.com");
+    await git(other, "config", "user.name", "Test");
+    await git(other, "switch", "main");
+    await writeFile(join(other, "file.txt"), "remote\n");
+    await git(other, "commit", "-am", "remote");
+    await git(other, "push", "origin", "main");
+    await writeFile(join(repo, "file.txt"), "local\n");
+    await git(repo, "commit", "-am", "local");
+    const localHead = await git(repo, "rev-parse", "HEAD");
+
+    await assert.rejects(
+      createGitService().createWorktree({
+        workspacePath: repo,
+        startBranchName: "main",
+        refreshUpstream: true,
+      }),
+      /diverged/i,
+    );
+    assert.equal(await git(repo, "rev-parse", "HEAD"), localHead);
+    assert.equal(
+      (await git(repo, "worktree", "list", "--porcelain"))
+        .split("\n")
+        .filter((line) => line.startsWith("worktree ")).length,
+      1,
+    );
+  } finally {
+    setDataBaseDir(null);
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("worktree refresh uses a local commit when no upstream is configured", async () => {
+  const base = await mkdtemp(join(tmpdir(), "codez-worktree-no-upstream-"));
+  const repo = join(base, "project");
+  await mkdir(repo);
+  setDataBaseDir(base);
+  try {
+    await git(repo, "init", "-b", "main");
+    await git(repo, "config", "user.email", "test@example.com");
+    await git(repo, "config", "user.name", "Test");
+    await writeFile(join(repo, "file.txt"), "local\n");
+    await git(repo, "add", "file.txt");
+    await git(repo, "commit", "-m", "local");
+    const localHead = await git(repo, "rev-parse", "HEAD");
+
+    const service = createGitService();
+    const created = await service.createWorktree({
+      workspacePath: repo,
+      startBranchName: "main",
+      refreshUpstream: true,
+    });
+    assert.equal(created.startCommitHash, localHead);
+    assert.equal(created.upstreamRefresh, "no-upstream");
+    assert.equal(
+      (await service.listManagedWorktrees()).worktrees[0]?.upstreamRefresh,
+      "no-upstream",
+    );
+  } finally {
+    setDataBaseDir(null);
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test("managed worktrees can be listed and clean worktrees removed", async () => {
   const base = await mkdtemp(join(tmpdir(), "codez-worktree-manage-"));
   const repo = join(base, "project");

@@ -6,6 +6,7 @@ import {
   type PlanState,
 } from "@zcode/shared/zcode-protocol-v4";
 import type { AgentRuntimeId } from "@zcode/shared";
+import type { SessionModeState } from "@agentclientprotocol/sdk";
 
 const HISTORY_WINDOW_ROWS = 60;
 const UNSUPPORTED = { allowed: false as const, reasonCode: "acpCapabilityUnsupported" };
@@ -23,10 +24,18 @@ export function buildAcpProjectionSnapshot(input: {
   thought: string;
   thoughtLevels: string[];
   modelOptions: Array<{ id: string; name: string }>;
+  modes?: SessionModeState | null;
   permissions: PendingInteraction[];
   plan: PlanState | null;
   rows: ConversationRow[];
   unavailableReason?: string | null;
+  lastError?: {
+    code: string;
+    message: string;
+    recoverable: boolean;
+    at: number;
+    source: "runtime";
+  } | null;
 }): ConversationSnapshot {
   const { phase } = input;
   return conversationSnapshotSchema.parse({
@@ -50,7 +59,7 @@ export function buildAcpProjectionSnapshot(input: {
             at: Date.now(),
             source: "runtime",
           }
-        : null,
+        : (input.lastError ?? null),
       apiRetry: null,
     },
     availability: {
@@ -94,6 +103,16 @@ export function buildAcpProjectionSnapshot(input: {
         : {}),
       thoughtLevels: input.thoughtLevels,
       acpModelOptions: input.modelOptions,
+      ...(input.modes
+        ? {
+            acpModeOptions: input.modes.availableModes.map(({ id, name, description }) => ({
+              id,
+              name,
+              ...(description ? { description } : {}),
+            })),
+            acpModeId: input.modes.currentModeId,
+          }
+        : {}),
       followupMode: "queue",
       mode: "build",
     },

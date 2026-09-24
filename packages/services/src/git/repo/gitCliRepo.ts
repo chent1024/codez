@@ -1018,6 +1018,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       workspacePath: string,
       startBranchName: string,
       managedRootPath?: string,
+      refreshUpstream = false,
     ): Promise<GitCreateWorktreeResult> {
       const repository = await this.resolveRepository(workspacePath);
       if (!repository.isGitAvailable || !repository.isRepository) {
@@ -1028,14 +1029,80 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       if (!selected?.commitHash) {
         throw new Error(`Local branch not found: ${startBranchName}`);
       }
-      const startCommitHash = selected.commitHash;
+      let startCommitHash = selected.commitHash;
+      let upstreamRefresh: GitCreateWorktreeResult["upstreamRefresh"] = "disabled";
+      if (refreshUpstream) {
+        const upstreamResult = await commandProvider.run({
+          cwd: repository.repoRoot,
+          args: [
+            "for-each-ref",
+            `refs/heads/${startBranchName}`,
+            "--format=%(upstream:remotename)%00%(upstream:remoteref)%00%(upstream)",
+          ],
+          timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+          maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+        });
+        ensureGitCommandSucceeded("git for-each-ref upstream", upstreamResult);
+        const [remoteName, remoteRef, trackingRef] = upstreamResult.stdout.trim().split("\0");
+        if (remoteName && remoteRef && trackingRef) {
+          // 修复：只 fetch 后仍从旧的本地 HEAD 创建，会让新工作树缺少远端提交。
+          // 在确认祖先关系后选择包含两侧提交的较新提交，不改源分支。
+          if (remoteName !== ".") {
+            const fetched = await commandProvider.run({
+              cwd: repository.repoRoot,
+              args: ["fetch", "--no-tags", remoteName, `+${remoteRef}:${trackingRef}`],
+              env: { GIT_TERMINAL_PROMPT: "0" },
+              timeoutMs: DEFAULT_GIT_PUSH_TIMEOUT_MS,
+              maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+            });
+            if (fetched.exitCode !== 0) {
+              throw new Error(`Failed to refresh upstream for ${startBranchName}`);
+            }
+          }
+          const trackingHead = await commandProvider.run({
+            cwd: repository.repoRoot,
+            args: ["rev-parse", trackingRef],
+            timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+            maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+          });
+          ensureGitCommandSucceeded("git rev-parse upstream", trackingHead);
+          const upstreamCommitHash = trackingHead.stdout.trim();
+          const localIsAncestor = await commandProvider.run({
+            cwd: repository.repoRoot,
+            args: ["merge-base", "--is-ancestor", startCommitHash, upstreamCommitHash],
+            timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+            maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+          });
+          if (localIsAncestor.exitCode === 0) {
+            startCommitHash = upstreamCommitHash;
+          } else if (localIsAncestor.exitCode === 1) {
+            const remoteIsAncestor = await commandProvider.run({
+              cwd: repository.repoRoot,
+              args: ["merge-base", "--is-ancestor", upstreamCommitHash, startCommitHash],
+              timeoutMs: DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+              maxOutputBytes: DEFAULT_GIT_OUTPUT_BYTES,
+            });
+            if (remoteIsAncestor.exitCode !== 0) {
+              throw new Error(`Local branch and upstream have diverged: ${startBranchName}`);
+            }
+          } else {
+            throw new Error(`Cannot compare local and upstream branches: ${startBranchName}`);
+          }
+          upstreamRefresh = remoteName === "." ? "local-upstream" : "refreshed";
+        } else {
+          upstreamRefresh = "no-upstream";
+        }
+      }
       const parent = getManagedWorktreeRoot(managedRootPath);
       await assertManagedRootOutsideRepository(parent, repository.repoRoot);
       await mkdir(parent, { recursive: true });
       await assertManagedRootOutsideRepository(parent, repository.repoRoot);
       const worktreeParent = await mkdtemp(join(parent, `${basename(repository.repoRoot)}-`));
       const worktreePath = join(worktreeParent, basename(repository.repoRoot));
-      await writeManagedWorktreeMarker(worktreeParent, worktreePath);
+      await writeManagedWorktreeMarker(worktreeParent, worktreePath, {
+        commitHash: startCommitHash,
+        upstreamRefresh,
+      });
       const created = await commandProvider.run({
         cwd: repository.repoRoot,
         args: ["worktree", "add", "--detach", worktreePath, startCommitHash],
@@ -1066,7 +1133,7 @@ export function createGitCliRepo(options?: { commandProvider?: GitCommandProvide
       ) {
         throw new Error("Created worktree failed repository verification");
       }
-      return { worktreePath, startCommitHash };
+      return { worktreePath, startCommitHash, upstreamRefresh };
     },
 
     async listManagedWorktrees(managedRootPath?: string) {
