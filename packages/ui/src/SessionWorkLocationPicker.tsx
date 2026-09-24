@@ -70,33 +70,38 @@ export function SessionWorkLocationPicker({
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2 text-foreground-subtle hover:text-foreground"
+            className="h-7 gap-1.5 px-2 text-foreground"
             aria-label={intl.formatMessage({ id: "worktree.location" })}
           >
             {selectedBranch ? (
-              <GitForkIcon className="size-4" />
+              <GitForkIcon className="size-4 text-foreground-subtle" />
             ) : (
-              <LaptopIcon className="size-4" />
+              <LaptopIcon className="size-4 text-foreground-subtle" />
             )}
             <span>
               {intl.formatMessage({ id: selectedBranch ? "worktree.worktree" : "worktree.local" })}
             </span>
-            <ChevronDownIcon className="size-3" />
+            <ChevronDownIcon className="size-3 text-foreground-subtle" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent side="top" align="start" avoidCollisions={false} className="w-56 p-1">
-          <div className="px-2 py-1.5 text-ui-xs text-foreground-subtle">
+        <PopoverContent
+          side="top"
+          align="start"
+          avoidCollisions={false}
+          className="w-56 gap-0.5 rounded-lg border-popover-border bg-menu p-1 text-foreground"
+        >
+          <div className="px-2 py-1 text-ui-xs text-foreground-subtle">
             {intl.formatMessage({ id: "worktree.location" })}
           </div>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-base hover:bg-menu-hover"
+            className="flex min-h-7 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-ui-base/relaxed text-foreground hover:bg-menu-hover"
             onClick={() => {
               onSelectBranch(null);
               setLocationOpen(false);
             }}
           >
-            <LaptopIcon className="size-4" />
+            <LaptopIcon className="size-4 text-foreground-subtle" />
             {intl.formatMessage({ id: "worktree.local" })}
             {!selectedBranch && <CheckIcon className="ml-auto size-4" />}
           </button>
@@ -106,10 +111,10 @@ export function SessionWorkLocationPicker({
             title={
               !worktreeAvailable ? intl.formatMessage({ id: "worktree.unavailable" }) : undefined
             }
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-base hover:bg-menu-hover disabled:opacity-50"
+            className="flex min-h-7 w-full items-center gap-2 rounded-md px-2 py-1 text-left text-ui-base/relaxed text-foreground hover:bg-menu-hover disabled:opacity-50"
             onClick={() => void chooseWorktree()}
           >
-            <GitForkIcon className="size-4" />
+            <GitForkIcon className="size-4 text-foreground-subtle" />
             {intl.formatMessage({ id: "worktree.newLocal" })}
             {selectedBranch && <CheckIcon className="ml-auto size-4" />}
           </button>
@@ -124,14 +129,10 @@ export function SessionWorkLocationPicker({
           }}
         >
           <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 gap-1.5 px-2 text-foreground-subtle hover:text-foreground"
-            >
-              <GitBranchIcon className="size-4" />
+            <Button variant="ghost" size="sm" className="h-7 gap-1.5 px-2 text-foreground">
+              <GitBranchIcon className="size-4 text-foreground-subtle" />
               <span className="max-w-40 truncate">{selectedBranch}</span>
-              <ChevronDownIcon className="size-3" />
+              <ChevronDownIcon className="size-3 text-foreground-subtle" />
             </Button>
           </PopoverTrigger>
           <PopoverContent side="top" align="start" avoidCollisions={false} className="w-72 p-1">
