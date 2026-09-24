@@ -249,11 +249,18 @@ export class AcpV4Bridge {
         const payload = commandPayloadSchemas.switchModelConfig.parse(envelope.payload);
         if (payload.provider !== "acp") return reject("acpProviderRequired");
         const current = this.coordinator.snapshot(task);
+        if (current?.control.phase === "running") return reject("acpTurnRunning");
+        if (!payload.model && !payload.thought && !payload.acpModeId)
+          return reject("acpModelOrThoughtRequired");
         if (payload.model && payload.model !== current?.config.model)
           await this.coordinator.setModel({ ...task, value: payload.model });
         if (payload.thought && payload.thought !== this.coordinator.snapshot(task)?.config.thought)
           await this.coordinator.setThinkingLevel({ ...task, value: payload.thought });
-        if (!payload.model && !payload.thought) return reject("acpModelOrThoughtRequired");
+        if (
+          payload.acpModeId &&
+          payload.acpModeId !== this.coordinator.snapshot(task)?.config.acpModeId
+        )
+          await this.coordinator.setMode({ ...task, value: payload.acpModeId });
         return { commandId: envelope.commandId, status: "accepted", revisionAtDecision: revision };
       }
       default:

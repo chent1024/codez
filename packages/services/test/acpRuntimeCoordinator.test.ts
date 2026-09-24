@@ -15,11 +15,14 @@ import { createInterface } from 'node:readline';
 const input = createInterface({ input: process.stdin });
 let model = 'auto';
 let thought = 'low';
+let mode = 'default';
 const configOptions = () => [
   {id:'model',name:'Model',category:'model',type:'select',currentValue:model,
     options:[{value:'auto',name:'Auto'},{value:'ultimate',name:'Ultimate'}]},
   {id:'reasoning_effort',name:'Effort',category:'model',type:'select',currentValue:thought,
-    options:[{value:'low',name:'Low'},{value:'high',name:'High'}]}
+    options:[{value:'low',name:'Low'},{value:'high',name:'High'}]},
+  {id:'permission-mode',name:'Permission Mode',category:'mode',type:'select',currentValue:mode,
+    options:[{value:'default',name:'Default'},{value:'bypass',name:'Bypass Permissions'}]}
 ];
 for await (const line of input) {
   const request = JSON.parse(line);
@@ -29,11 +32,18 @@ for await (const line of input) {
   if (request.method === 'session/load') answer({configOptions:configOptions()});
   if (request.method === 'session/set_config_option') {
     if (request.params.configId === 'model') model = request.params.value;
-    else thought = request.params.value;
+    else if (request.params.configId === 'reasoning_effort') thought = request.params.value;
+    else if (request.params.configId === 'permission-mode') mode = request.params.value;
     answer({configOptions:configOptions()});
   }
   if (request.method === 'session/prompt') {
     const blocks = request.params.prompt;
+    if (blocks.some((block) => block.type === 'text' && block.text === 'agent-switch-bypass')) {
+      mode = 'bypass';
+      process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{
+        sessionId:request.params.sessionId,update:{sessionUpdate:'config_option_update',configOptions:configOptions()}
+      }})+'\\n');
+    }
     if (blocks.some((block) => block.type === 'text' && block.text === 'title-update')) {
       process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{
         sessionId:request.params.sessionId,update:{sessionUpdate:'session_info_update',title:'Agent title'}
@@ -48,6 +58,156 @@ for await (const line of input) {
   }
 }
 `;
+
+test("ACP saves confirmed mode and reapplies it before restoring a historical task", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "codez-acp-mode-restore-"));
+  const agentFile = join(dir, "agent.mjs");
+  const repo = new TaskIndexRepo(join(dir, "tasks.sqlite"));
+  const target = { workspacePath: dir, taskId: "mode-task" };
+  const makeCoordinator = () =>
+    new AcpRuntimeCoordinator(repo, {}, async () => ({
+      executable: process.execPath,
+      args: [agentFile],
+    }));
+  setDataBaseDir(dir);
+  let coordinator = makeCoordinator();
+  try {
+    await writeFile(agentFile, AGENT);
+    await saveAgentServerConfig({
+      id: "mode-restore-agent",
+      name: "Mode Restore Agent",
+      command: process.execPath,
+      args: [agentFile],
+    });
+    const created = await coordinator.create({
+      ...target,
+      commandId: target.taskId,
+      runtimeId: "mode-restore-agent",
+      modeId: "bypass",
+    });
+    assert.equal(created.acpModeId, "bypass");
+    assert.equal((await repo.getTaskMeta(target))?.acpModeId, "bypass");
+    await coordinator.closeAll();
+
+    // 新 Agent 进程从 default 启动；恢复必须在会话可用前把保存值重新应用。
+    coordinator = makeCoordinator();
+    const restored = await coordinator.load(target);
+    assert.equal(restored.config.acpModeId, "bypass");
+    await coordinator.setMode({ ...target, value: "default" });
+    assert.equal((await repo.getTaskMeta(target))?.acpModeId, "default");
+    await coordinator.closeAll();
+
+    coordinator = makeCoordinator();
+    assert.equal((await coordinator.load(target)).config.acpModeId, "default");
+    await coordinator.closeAll();
+    const bridge = new AcpV4Bridge(
+      repo,
+      () => {},
+      () => false,
+    );
+    try {
+      const ack = await bridge.command(
+        { workspacePath: dir },
+        {
+          commandId: "switch-mode",
+          clientId: "test-client",
+          sessionId: target.taskId,
+          type: "switchModelConfig",
+          payload: { provider: "acp", model: "", thought: "", acpModeId: "bypass" },
+          issuedAt: Date.now(),
+        },
+      );
+      assert.equal(ack.status, "accepted");
+      assert.equal((await repo.getTaskMeta(target))?.acpModeId, "bypass");
+    } finally {
+      await bridge.dispose();
+    }
+    const stored = await repo.getTaskMeta(target);
+    assert.ok(stored);
+    await repo.syncTaskMeta({ meta: { ...stored, acpModeId: "removed-mode" } });
+    coordinator = makeCoordinator();
+    const unavailable = await coordinator.load(target);
+    assert.equal(unavailable.control.phase, "error");
+    assert.equal((await repo.getTaskMeta(target))?.acpModeId, "removed-mode");
+
+    await coordinator.closeAll();
+    const legacy = { workspacePath: dir, taskId: "legacy-mode-task" };
+    const legacyMeta = await coordinator.create({
+      ...legacy,
+      commandId: legacy.taskId,
+      runtimeId: "mode-restore-agent",
+    });
+    await repo.syncTaskMeta({ meta: { ...legacyMeta, acpModeId: undefined } });
+    await coordinator.closeAll();
+    coordinator = makeCoordinator();
+    assert.equal((await coordinator.load(legacy)).config.acpModeId, "default");
+    await coordinator.sendPrompt({
+      ...legacy,
+      commandId: "agent-mode-change",
+      text: "agent-switch-bypass",
+    });
+    await waitForAcpCompletion(coordinator, legacy);
+    assert.equal((await repo.getTaskMeta(legacy))?.acpModeId, "bypass");
+
+    // Agent 已接受新权限模式但索引写入失败时，不能让旧持久值和运行态分叉后继续执行。
+    const syncTaskMeta = repo.syncTaskMeta.bind(repo);
+    repo.syncTaskMeta = async () => {
+      throw new Error("task index write failed");
+    };
+    try {
+      await assert.rejects(
+        coordinator.setMode({ ...legacy, value: "default" }),
+        /task index write failed/,
+      );
+      assert.equal(coordinator.snapshot(legacy)?.control.phase, "error");
+      assert.equal(coordinator.isUnavailable(legacy), true);
+      assert.equal((await repo.getTaskMeta(legacy))?.acpModeId, "bypass");
+    } finally {
+      repo.syncTaskMeta = syncTaskMeta;
+    }
+
+    const agentChanged = { workspacePath: dir, taskId: "agent-mode-write-failure" };
+    await coordinator.create({
+      ...agentChanged,
+      commandId: agentChanged.taskId,
+      runtimeId: "mode-restore-agent",
+    });
+    repo.syncTaskMeta = async (input) => {
+      if (input.meta.taskId === agentChanged.taskId && input.meta.acpModeId === "bypass")
+        throw new Error("mode update write failed");
+      return syncTaskMeta(input);
+    };
+    try {
+      await coordinator.sendPrompt({
+        ...agentChanged,
+        commandId: "agent-mode-write-failure-prompt",
+        text: "agent-switch-bypass",
+      });
+      await waitForAcpCompletion(coordinator, agentChanged, "error");
+      assert.equal((await repo.getTaskMeta(agentChanged))?.acpModeId, "default");
+      assert.equal(coordinator.snapshot(agentChanged)?.control.phase, "error");
+      assert.equal(
+        coordinator.snapshot(agentChanged)?.availability.switchModelConfig.allowed,
+        false,
+      );
+      await assert.rejects(
+        coordinator.sendPrompt({
+          ...agentChanged,
+          commandId: "blocked-after-mode-write-failure",
+          text: "must not run",
+        }),
+        /process exited/,
+      );
+    } finally {
+      repo.syncTaskMeta = syncTaskMeta;
+    }
+  } finally {
+    await coordinator.closeAll();
+    repo.close();
+    setDataBaseDir(null);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("ACP coordinator binds workbench identity, deduplicates and restores V4 history", async () => {
   const dir = await mkdtemp(join(tmpdir(), "codez-acp-coordinator-"));
@@ -323,11 +483,12 @@ test("ACP sends local images and files using declared prompt capabilities", asyn
 async function waitForAcpCompletion(
   coordinator: AcpRuntimeCoordinator,
   target: { workspacePath: string; taskId: string },
+  phase: "completedSuccess" | "error" = "completedSuccess",
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("ACP turn did not complete")), 3000);
     const poll = () => {
-      if (coordinator.snapshot(target)?.control.phase === "completedSuccess") {
+      if (coordinator.snapshot(target)?.control.phase === phase) {
         clearTimeout(timeout);
         resolve();
         return;

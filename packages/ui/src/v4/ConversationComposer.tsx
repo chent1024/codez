@@ -2313,13 +2313,23 @@ function ConversationComposerImpl({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={disabled || !draftMode || acpModeLoading || !acpModes.length}
+                    disabled={
+                      disabled ||
+                      acpModeLoading ||
+                      !acpModes.length ||
+                      (!draftMode && snapshot?.availability.switchModelConfig.allowed === false)
+                    }
                     aria-label={intl.formatMessage({ id: "chat.toolbar.acpMode.label" })}
-                    title={intl.formatMessage({ id: acpModes.length ? "chat.toolbar.acpMode.label" : "chat.toolbar.acpMode.unavailable" })}
+                    title={intl.formatMessage({
+                      id: acpModes.length
+                        ? "chat.toolbar.acpMode.label"
+                        : "chat.toolbar.acpMode.unavailable",
+                    })}
                     className="h-7 gap-1 px-2 text-ui-base"
                   >
                     <ShieldIcon className="size-4" />
-                    {acpModes.find((mode) => mode.id === acpSelectedMode)?.name ?? intl.formatMessage({ id: "chat.toolbar.acpMode.placeholder" })}
+                    {acpModes.find((mode) => mode.id === acpSelectedMode)?.name ??
+                      intl.formatMessage({ id: "chat.toolbar.acpMode.placeholder" })}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" className="min-w-40">

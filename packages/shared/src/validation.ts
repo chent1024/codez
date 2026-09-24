@@ -1154,6 +1154,7 @@ export const zcodeTaskMetaSchema = z.object({
   taskId: nonEmptyStringSchema,
   runtimeId: agentRuntimeIdSchema.optional(),
   nativeSessionId: nonEmptyStringSchema.optional(),
+  acpModeId: nonEmptyStringSchema.optional(),
   agentServerFingerprint: z
     .string()
     .regex(/^[a-f0-9]{64}$/)

@@ -4550,6 +4550,7 @@ const enUS: Record<string, string> = {
   "chat.toolbar.acpMode.label": "ACP session mode",
   "chat.toolbar.acpMode.unavailable": "This agent does not offer session modes",
   "chat.toolbar.acpMode.placeholder": "Mode",
+  "chat.toolbar.acpMode.changeFailed": "Could not change the ACP session mode",
   // CUA composer entry button
   "chat.toolbar.computerUse.label": "Computer Use",
   "chat.toolbar.computerUse.tooltip.idle":

@@ -1719,6 +1719,33 @@ export function SessionPane({
     ],
   );
 
+  const handleSelectAcpMode = useCallback(
+    (modeId: string) => {
+      if (sessionId === null) {
+        setAcpSelectedMode(modeId);
+        return;
+      }
+      if (!isAcpRuntime || !sessionId || acpModeLoading) return;
+      setAcpModeLoading(true);
+      void dispatchCommand(
+        "switchModelConfig",
+        { provider: "acp", model: "", thought: "", acpModeId: modeId },
+        sessionId,
+        snapshotRef.current?.revision,
+      )
+        .then((ack) => {
+          if (ack.status !== "accepted")
+            toast(intl.formatMessage({ id: "chat.toolbar.acpMode.changeFailed" }));
+        })
+        .catch((error) => {
+          logger.warn("[acp-mode] 切换已有会话模式失败", error);
+          toast(intl.formatMessage({ id: "chat.toolbar.acpMode.changeFailed" }));
+        })
+        .finally(() => setAcpModeLoading(false));
+    },
+    [acpModeLoading, dispatchCommand, intl, isAcpRuntime, sessionId],
+  );
+
   const handleFetchFileChanges = useCallback(
     (target: ConversationRowTarget, options: ConversationFileChangesRequestOptions) => {
       const current = snapshotRef.current;
@@ -4762,7 +4789,7 @@ export function SessionPane({
         acpModes={isDraft ? acpModes : snapshot?.config.acpModeOptions}
         acpSelectedMode={isDraft ? acpSelectedMode : snapshot?.config.acpModeId}
         acpModeLoading={acpModeLoading}
-        onSelectAcpMode={setAcpSelectedMode}
+        onSelectAcpMode={handleSelectAcpMode}
         updateComposerContent={updateComposerContent}
         createSubmissionFromComposer={createSubmissionFromComposer}
         contextHeader={isDraft ? draftComposerHeader : undefined}

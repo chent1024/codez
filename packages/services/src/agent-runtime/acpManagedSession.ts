@@ -91,6 +91,30 @@ export function createAcpSessionObserver(input: {
           managed.meta = await input.syncMeta(managed.meta);
         }
       }
+      if (
+        notification.update.sessionUpdate === "current_mode_update" ||
+        notification.update.sessionUpdate === "config_option_update"
+      ) {
+        const modes = managed.connection.modeState();
+        input.projection.setModes(modes);
+        if (modes?.currentModeId && managed.meta.acpModeId !== modes.currentModeId) {
+          try {
+            managed.meta = await input.syncMeta({
+              ...managed.meta,
+              acpModeId: modes.currentModeId,
+              updatedAt: Date.now(),
+            });
+          } catch {
+            // Agent 主动改变模式却无法持久化时，阻止后续输入使用无法恢复的权限状态。
+            managed.crashed = true;
+            managed.closing = true;
+            await managed.connection.close().catch(() => {});
+            input.projection.markUnavailable("ACP mode update could not be saved; restart the app");
+            input.publish(managed);
+            return;
+          }
+        }
+      }
       input.publish(managed);
     },
     requestPermission: (request): Promise<RequestPermissionResponse> => {

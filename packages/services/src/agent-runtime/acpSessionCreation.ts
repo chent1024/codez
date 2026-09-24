@@ -68,10 +68,12 @@ export async function createAcpManagedSession(input: {
     projection.setModes(connection.modeState());
     await transcript.initialize();
     const now = Date.now();
+    const confirmedModeId = connection.modeState()?.currentModeId;
     const meta: ZCodeTaskMeta = {
       taskId: input.taskId,
       runtimeId: input.runtimeId,
       nativeSessionId,
+      ...(confirmedModeId ? { acpModeId: confirmedModeId } : {}),
       ...(input.spec.fingerprint ? { agentServerFingerprint: input.spec.fingerprint } : {}),
       traceId: input.taskId,
       title: "New session",

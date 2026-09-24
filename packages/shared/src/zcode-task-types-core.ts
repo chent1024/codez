@@ -269,6 +269,8 @@ export interface ZCodeTaskMeta {
   runtimeId?: AgentRuntimeId;
   /** ACP 原生 sessionId；ZCode CLI 使用 taskId，无需单独保存。 */
   nativeSessionId?: string;
+  /** ACP Agent 已确认的原生会话模式；恢复原生 session 时按 task 重放。 */
+  acpModeId?: string;
   /** 自定义 ACP 注册条目的创建时身份；重用同一 ID 时阻止误连旧会话。 */
   agentServerFingerprint?: string;
   /** session/任务级观测 traceId，不用于区分单次用户输入 */

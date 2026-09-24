@@ -4277,6 +4277,7 @@ const zhCN: Record<string, string> = {
   "chat.toolbar.acpMode.label": "ACP 会话模式",
   "chat.toolbar.acpMode.unavailable": "此 Agent 未提供会话模式",
   "chat.toolbar.acpMode.placeholder": "模式",
+  "chat.toolbar.acpMode.changeFailed": "无法切换 ACP 会话模式",
   // CUA 输入框常驻入口按钮
   "chat.toolbar.computerUse.label": "电脑操作",
   "chat.toolbar.computerUse.tooltip.idle": "电脑操作空闲——首次使用时自动启动",

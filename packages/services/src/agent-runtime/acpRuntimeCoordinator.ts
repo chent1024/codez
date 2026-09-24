@@ -219,6 +219,9 @@ export class AcpRuntimeCoordinator {
             .some((level) => level.value === meta.thoughtLevel && level.selected)
         )
           await connection.setThinkingLevel(meta.thoughtLevel);
+        // task 索引是已确认的恢复意图；session/load 返回默认模式时先重放再开放输入。
+        if (meta.acpModeId && connection.modeState()?.currentModeId !== meta.acpModeId)
+          await connection.setMode(meta.acpModeId);
         projection.setModelOptions(connection.modelOptions());
         projection.setThinkingLevels(connection.thinkingLevels());
         projection.setModes(connection.modeState());
@@ -408,6 +411,31 @@ export class AcpRuntimeCoordinator {
     await this.taskIndex.syncTaskMeta({ meta: managed.meta });
     this.publish(managed);
     return levels;
+  }
+
+  async setMode(target: AcpWorkspaceTarget & { taskId: string; value: string }): Promise<void> {
+    const key = sessionKey(target, target.taskId);
+    const managed = this.active.get(key);
+    if (!managed) throw new Error("ACP session is not loaded");
+    if (!managed.connection.modeState()?.availableModes.some((mode) => mode.id === target.value))
+      throw new Error(`ACP Agent does not advertise mode ${JSON.stringify(target.value)}`);
+    try {
+      const modes = await managed.connection.setMode(target.value);
+      managed.meta = await this.taskIndex.syncTaskMeta({
+        meta: { ...managed.meta, acpModeId: modes.currentModeId, updatedAt: Date.now() },
+      });
+      managed.projection.setModes(modes);
+      this.publish(managed);
+    } catch (error) {
+      // Agent 调用已开始，超时或索引写入失败都无法保证运行态与恢复意图一致。
+      await this.close(target).catch(() => {});
+      managed.projection.markUnavailable(
+        "ACP mode change could not be confirmed; reopen the session",
+      );
+      this.unavailable.set(key, managed.projection);
+      this.publish(managed);
+      throw error;
+    }
   }
 
   async setModel(target: AcpWorkspaceTarget & { taskId: string; value: string }): Promise<void> {

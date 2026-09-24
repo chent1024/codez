@@ -217,6 +217,7 @@ export const commandPayloadSchemas = {
     provider: z.string(),
     model: z.string(),
     thought: z.string(),
+    acpModeId: z.string().trim().min(1).optional(),
   }),
   // additive（冻结面按黄金测试背书演进）：agent 协作模式切换。
   // 值域 = core CollaborationMode 的可切换子集（auto 非用户可切，不进 UI 命令面）。

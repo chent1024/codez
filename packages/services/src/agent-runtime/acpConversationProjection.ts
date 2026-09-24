@@ -261,7 +261,7 @@ export class AcpConversationProjection {
   finishTurn(result: PromptResponse | { error: string }, endedAt = Date.now()): void {
     if (!this.activeTurnId) return;
     const failure = acpPromptFailure(result);
-    const failed = failure !== null;
+    const failed = failure !== null || this.unavailableReason !== null;
     const cancelled = !failed && "stopReason" in result && result.stopReason === "cancelled";
     this.completeReasoning(endedAt, cancelled || failed);
     this.lastError = failure
